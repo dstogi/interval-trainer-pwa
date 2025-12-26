@@ -351,6 +351,10 @@ export default function App() {
   }
 
   return (
+  <div className="app-shell">
+    {/* dein bisheriges UI */}
+  </div>
+)
     <div style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
       <h2 style={{ marginTop: 0 }}>Interval Trainer</h2>
 

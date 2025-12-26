@@ -221,6 +221,41 @@ function formatDateTime(ts: number): string {
   } catch {
     return String(ts);
   }
+
+function safeFilePart(s: string): string {
+  return (s || "data")
+    .toString()
+    .trim()
+    .replace(/[\s]+/g, "_")
+    .replace(/[^\w\-]+/g, "")
+    .slice(0, 40) || "data";
+}
+
+function downloadTextFile(filename: string, content: string, mime = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function csvEscapeCell(value: any, delimiter = ";"): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  const needsQuote = s.includes('"') || s.includes("\n") || s.includes("\r") || s.includes(delimiter);
+  const escaped = s.replace(/"/g, '""');
+  return needsQuote ? `"${escaped}"` : escaped;
+}
+
+function toCSV(rows: any[][], delimiter = ";"): string {
+  return rows.map((r) => r.map((c) => csvEscapeCell(c, delimiter)).join(delimiter)).join("\n");
+}
 }
 
 /* =========================
@@ -873,18 +908,21 @@ export default function App() {
         )}
 
         {/* HISTORY */}
-        {screen.name === "HISTORY" && (
-          <HistoryView
-            entries={history}
-            profiles={profiles}
-            activeProfileId={activeProfileId}
-            onChangeActiveProfile={setActiveProfileId}
-            profileName={profileName}
-            onBack={() => setScreen({ name: "HOME" })}
-            onDeleteEntry={deleteHistoryEntry}
-            onClearActiveProfile={clearHistoryForActiveProfile}
-          />
-        )}
+     {screen.name === "HISTORY" && (
+  <HistoryView
+    entries={history}
+    profiles={profiles}
+    activeProfileId={activeProfileId}
+    onChangeActiveProfile={setActiveProfileId}
+    profileName={profileName}
+    onBack={() => setScreen({ name: "HOME" })}
+    onDeleteEntry={deleteHistoryEntry}
+    onClearActiveProfile={clearHistoryForActiveProfile}
+    cards={cards}
+    prefs={prefs}
+  />
+)}
+
 
         {/* EDIT */}
         {screen.name === "EDIT" &&
@@ -1767,6 +1805,8 @@ function HistoryView({
   onBack,
   onDeleteEntry,
   onClearActiveProfile,
+  cards,
+  prefs,
 }: {
   entries: WorkoutLogEntry[];
   profiles: Profile[];
@@ -1776,6 +1816,8 @@ function HistoryView({
   onBack: () => void;
   onDeleteEntry: (id: string) => void;
   onClearActiveProfile: () => void;
+  cards: IntervalCard[];
+  prefs: Prefs;
 }) {
   const filtered = useMemo(() => {
     return entries
@@ -1805,6 +1847,207 @@ function HistoryView({
     };
   }, [filtered]);
 
+  type ExercisePR = {
+    exercise: string;
+    bestKg: number;
+    bestKgAt: number;
+    bestReps: number;
+    bestRepsAt: number;
+    bestAvgKg: number; // kg pro Wdh (Ø)
+    bestAvgKgAt: number;
+  };
+
+  const prs = useMemo(() => {
+    const map = new Map<string, ExercisePR>();
+
+    for (const e of filtered) {
+      if (e.kind !== "REPS") continue;
+
+      const br = e.reps?.breakdown;
+      if (!Array.isArray(br)) continue;
+
+      for (const b of br) {
+        const ex = (b.exercise || "—").trim() || "—";
+        const kg = Number((b as any).kg) || 0;
+        const reps = Number((b as any).reps) || 0;
+        const avg = reps > 0 ? kg / reps : 0;
+
+        const pr =
+          map.get(ex) ??
+          ({
+            exercise: ex,
+            bestKg: 0,
+            bestKgAt: 0,
+            bestReps: 0,
+            bestRepsAt: 0,
+            bestAvgKg: 0,
+            bestAvgKgAt: 0,
+          } satisfies ExercisePR);
+
+        if (kg > pr.bestKg) {
+          pr.bestKg = kg;
+          pr.bestKgAt = e.createdAt;
+        }
+        if (reps > pr.bestReps) {
+          pr.bestReps = reps;
+          pr.bestRepsAt = e.createdAt;
+        }
+        if (avg > pr.bestAvgKg) {
+          pr.bestAvgKg = avg;
+          pr.bestAvgKgAt = e.createdAt;
+        }
+
+        map.set(ex, pr);
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.bestKg - a.bestKg || b.bestReps - a.bestReps);
+  }, [filtered]);
+
+  const hasRepsPRs = prs.length > 0;
+
+  function exportBackupJSON() {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const backup = {
+      app: "interval-trainer",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      profiles,
+      activeProfileId,
+      cards,
+      prefs,
+      history: entries,
+    };
+
+    downloadTextFile(
+      `interval-trainer-backup-${stamp}.json`,
+      JSON.stringify(backup, null, 2),
+      "application/json;charset=utf-8"
+    );
+  }
+
+  function exportHistoryCSV() {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const prof = safeFilePart(profileName(activeProfileId));
+
+    const rows: any[][] = [];
+    rows.push([
+      "datetime_iso",
+      "datetime_local",
+      "profile",
+      "kind",
+      "title",
+      "exercise",
+      "planned_total_sec",
+      "planned_total_mmss",
+      "sets",
+      "reps_per_set",
+      "work_sec",
+      "rest_between_sets_sec",
+      "target_set_sec",
+      "total_reps",
+      "total_kg",
+    ]);
+
+    for (const e of filtered) {
+      const iso = new Date(e.createdAt).toISOString();
+      const local = formatDateTime(e.createdAt);
+      const profName = profileName(e.profileId);
+
+      if (e.kind === "TIME" && e.time) {
+        const t = e.time;
+        const totalReps = (t.sets ?? 0) * (t.repsPerSet ?? 0);
+
+        rows.push([
+          iso,
+          local,
+          profName,
+          "TIME",
+          e.cardTitle,
+          t.exercise ?? "",
+          t.plannedTotalSec ?? "",
+          typeof t.plannedTotalSec === "number" ? formatMMSS(t.plannedTotalSec) : "",
+          t.sets ?? "",
+          t.repsPerSet ?? "",
+          t.workSec ?? "",
+          t.restBetweenSetsSec ?? "",
+          "",
+          totalReps,
+          "",
+        ]);
+      } else if (e.kind === "REPS" && e.reps) {
+        const r = e.reps;
+        const names = Array.isArray(r.breakdown)
+          ? Array.from(
+              new Set(
+                r.breakdown
+                  .map((x) => (x.exercise || "").trim())
+                  .filter(Boolean)
+              )
+            )
+          : [];
+        const exerciseField = names.length === 1 ? names[0] : names.length > 1 ? "Multi" : "";
+
+        rows.push([
+          iso,
+          local,
+          profName,
+          "REPS",
+          e.cardTitle,
+          exerciseField,
+          "",
+          "",
+          r.setsCount ?? "",
+          "",
+          "",
+          r.restBetweenSetsSec ?? "",
+          r.targetSetSec ?? "",
+          r.totalReps ?? "",
+          typeof r.totalKg === "number" ? r.totalKg.toFixed(1) : "",
+        ]);
+      } else {
+        // Fallback falls ein Eintrag unvollständig ist
+        rows.push([iso, local, profName, e.kind, e.cardTitle, "", "", "", "", "", "", "", "", "", ""]);
+      }
+    }
+
+    const csv = toCSV(rows, ";");
+    downloadTextFile(`interval-trainer-history-${prof}-${stamp}.csv`, csv, "text/csv;charset=utf-8");
+  }
+
+  function exportExercisesCSV() {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const prof = safeFilePart(profileName(activeProfileId));
+
+    const rows: any[][] = [];
+    rows.push(["datetime_iso", "datetime_local", "profile", "title", "exercise", "reps", "kg"]);
+
+    for (const e of filtered) {
+      if (e.kind !== "REPS") continue;
+      const br = e.reps?.breakdown;
+      if (!Array.isArray(br)) continue;
+
+      const iso = new Date(e.createdAt).toISOString();
+      const local = formatDateTime(e.createdAt);
+      const profName = profileName(e.profileId);
+
+      for (const b of br) {
+        rows.push([
+          iso,
+          local,
+          profName,
+          e.cardTitle,
+          (b.exercise || "").trim(),
+          b.reps ?? 0,
+          typeof b.kg === "number" ? b.kg.toFixed(1) : b.kg ?? 0,
+        ]);
+      }
+    }
+
+    const csv = toCSV(rows, ";");
+    downloadTextFile(`interval-trainer-exercises-${prof}-${stamp}.csv`, csv, "text/csv;charset=utf-8");
+  }
+
   return (
     <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
       <button onClick={onBack}>← Zurück</button>
@@ -1823,6 +2066,14 @@ function HistoryView({
           </select>
         </label>
 
+        <button onClick={exportBackupJSON}>Backup JSON</button>
+        <button onClick={exportHistoryCSV} disabled={filtered.length === 0}>
+          Export CSV (Sessions)
+        </button>
+        <button onClick={exportExercisesCSV} disabled={!hasRepsPRs}>
+          Export CSV (Übungen)
+        </button>
+
         <button onClick={onClearActiveProfile}>Verlauf löschen (Profil)</button>
       </div>
 
@@ -1837,6 +2088,36 @@ function HistoryView({
         <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
           Bestwert (REPS): <b>{stats.bestKg.toFixed(1)}</b> kg bewegt in einer Session
         </div>
+      </div>
+
+      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+        <div style={{ fontWeight: 800 }}>Bestwerte pro Übung (REPS – Zusatzgewicht)</div>
+
+        {!hasRepsPRs ? (
+          <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>
+            Noch keine REPS‑Einträge mit Übungs‑Breakdown gespeichert.
+            <br />
+            Tipp: Eine REPS‑Session beenden → <b>„In Verlauf speichern“</b>.
+          </div>
+        ) : (
+          <div style={{ marginTop: 8, display: "grid", gap: 10 }}>
+            {prs.slice(0, 20).map((pr) => (
+              <div key={pr.exercise} style={{ borderTop: "1px dashed #ddd", paddingTop: 8 }}>
+                <div style={{ fontWeight: 800 }}>{pr.exercise}</div>
+                <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>
+                  Best kg bewegt: <b>{pr.bestKg.toFixed(1)}</b> kg{" "}
+                  {pr.bestKgAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestKgAt)})</span> : null}
+                  <br />
+                  Best Wdh: <b>{pr.bestReps}</b>{" "}
+                  {pr.bestRepsAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestRepsAt)})</span> : null}
+                  <br />
+                  Best Ø Zusatzgewicht: <b>{pr.bestAvgKg.toFixed(1)}</b> kg/Wdh{" "}
+                  {pr.bestAvgKgAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestAvgKgAt)})</span> : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -1884,8 +2165,9 @@ function HistoryView({
       )}
 
       <div style={{ fontSize: 12, opacity: 0.7 }}>
-        Hinweis: Bei REPS ist „kg bewegt“ = Wiederholungen × Zusatzgewicht (Körpergewicht wird nicht mitgerechnet).
+        Hinweis: „kg bewegt“ = Σ(Wdh × Zusatzgewicht). CSV nutzt <b>;</b> als Trennzeichen.
       </div>
     </div>
   );
 }
+

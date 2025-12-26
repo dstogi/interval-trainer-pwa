@@ -2010,6 +2010,7 @@ function HistoryView({
       }
     }
 
+   
     const csv = toCSV(rows, ";");
     downloadTextFile(`interval-trainer-history-${prof}-${stamp}.csv`, csv, "text/csv;charset=utf-8");
   }

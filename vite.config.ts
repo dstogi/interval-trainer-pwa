@@ -8,38 +8,35 @@ export default defineConfig({
   base,
   plugins: [
     react(),
-VitePWA({
-  registerType: 'autoUpdate',
-  includeAssets: [
-    'apple-touch-icon.png',
-    'pwa-192.png',
-    'pwa-512.png',
-    'favicon-32.png',
-    'favicon-16.png',
-  ],
-  manifest: {
-    name: 'Interval Trainer',
-    short_name: 'Interval',
-    start_url: base,
-    scope: base,
-    display: 'standalone',
-    background_color: '#6C63FF',
-    theme_color: '#6C63FF',
-    icons: [
-      { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
-      { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
-      { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-    ],
-  },
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: [
+        'apple-touch-icon.png',
+        'favicon-32.png',
+        'favicon-16.png',
+      ],
+      manifest: {
+        name: 'Interval Trainer',
+        short_name: 'Interval',
+        start_url: base,
+        scope: base,
+        display: 'standalone',
+        background_color: '#6C63FF',
+        theme_color: '#6C63FF',
+        // optional aber empfehlenswert:
+        // description: '...',
 
-  // 👇 wichtig für offline + “alte caches weg”
-  workbox: {
-    navigateFallback: 'index.html',
-    cleanupOutdatedCaches: true,
-    skipWaiting: true,
-    clientsClaim: true,
-    globPatterns: ['**/*.{js,css,html,ico,png,svg,json,txt,woff2}'],
-  },
-}),
+        icons: [
+          { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
+          // optional besser als eigenes maskable icon:
+          // { src: 'pwa-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        navigateFallback: 'index.html',
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,json,txt,woff2}'],
+      },
+    }),
   ],
 })

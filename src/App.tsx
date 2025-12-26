@@ -41,7 +41,7 @@ type RepSet = {
   id: string;
   exercise: string;
   reps: number;
-  weightKg: number;
+  weightKg: number; // Zusatzgewicht pro Wiederholung (A)
 };
 
 type RepCard = {
@@ -50,6 +50,7 @@ type RepCard = {
   title: string;
   createdAt: number;
   updatedAt: number;
+
   sets: RepSet[];
   restBetweenSetsSec: number;
   targetSetSec?: number;
@@ -63,6 +64,7 @@ function isRepCard(card: IntervalCard): card is RepCard {
 
 function repTotals(card: RepCard) {
   const totalReps = card.sets.reduce((sum, s) => sum + (s.reps || 0), 0);
+  // A: Zusatzgewicht => bewegte kg = reps * Zusatzgewicht
   const totalKg = card.sets.reduce((sum, s) => sum + (s.reps || 0) * (s.weightKg || 0), 0);
   return { totalReps, totalKg };
 }
@@ -97,7 +99,9 @@ type Prefs = {
 type Screen =
   | { name: "HOME" }
   | { name: "EDIT"; id?: string; kind?: CardKind }
-  | { name: "RUN"; id: string };
+  | { name: "RUN"; id: string }
+  | { name: "HISTORY" }
+  | { name: "PROFILES" };
 
 type RunnerState = {
   status: RunStatus;
@@ -107,11 +111,58 @@ type RunnerState = {
 };
 
 /* =========================
+   Profiles + History Types
+========================= */
+
+type Profile = {
+  id: string;
+  name: string; // Person oder Gruppe
+  createdAt: number;
+};
+
+type WorkoutLogKind = "TIME" | "REPS";
+
+type TimeLogData = {
+  exercise: string;
+  plannedTotalSec: number;
+  sets: number;
+  repsPerSet: number;
+  workSec: number;
+  restBetweenSetsSec: number;
+};
+
+type RepLogData = {
+  totalReps: number;
+  totalKg: number; // Zusatzgewicht-bewegte kg
+  setsCount: number;
+  restBetweenSetsSec: number;
+  targetSetSec?: number;
+  breakdown: { exercise: string; reps: number; kg: number }[];
+};
+
+type WorkoutLogEntry = {
+  id: string;
+  createdAt: number;
+  profileId: string;
+
+  kind: WorkoutLogKind;
+  cardId?: string;
+  cardTitle: string;
+
+  time?: TimeLogData;
+  reps?: RepLogData;
+};
+
+/* =========================
    Storage / Helpers
 ========================= */
 
 const CARDS_KEY = "interval_trainer_cards_v1";
 const PREFS_KEY = "interval_trainer_prefs_v1";
+
+const PROFILES_KEY = "interval_trainer_profiles_v1";
+const ACTIVE_PROFILE_KEY = "interval_trainer_active_profile_v1";
+const HISTORY_KEY = "interval_trainer_history_v1";
 
 function makeId(): string {
   try {
@@ -144,10 +195,7 @@ function parseTimeToSec(input: string): number {
   return Math.max(0, Math.trunc(n));
 }
 
-/**
- * parseMMSS: wie parseTimeToSec, aber gibt null zurück wenn leer
- * -> praktisch für optional Felder (z.B. Zielzeit im RepEditor)
- */
+// mm:ss -> sec, aber "leer" => null (für optionale Felder)
 function parseMMSS(input: string): number | null {
   const s = input.trim();
   if (!s) return null;
@@ -161,9 +209,22 @@ function formatMMSS(totalSec: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function formatDateTime(ts: number): string {
+  try {
+    return new Date(ts).toLocaleString("de-DE", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(ts);
+  }
+}
+
 /* =========================
-   TIME: Phasen bauen
-   WICHTIG: nur für TimeCard!
+   TIME: Phasen bauen (nur TimeCard!)
 ========================= */
 
 function buildPhases(card: TimeCard): Phase[] {
@@ -256,6 +317,10 @@ function computeRemainingTotal(phases: Phase[], idx: number, remainingSec: numbe
   return total;
 }
 
+/* =========================
+   Cards Storage (normalisiert)
+========================= */
+
 function normalizeLoadedCard(raw: any): IntervalCard | null {
   if (!raw || typeof raw !== "object") return null;
 
@@ -315,9 +380,7 @@ function loadCards(): IntervalCard[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((x) => normalizeLoadedCard(x))
-      .filter((x): x is IntervalCard => Boolean(x));
+    return parsed.map((x) => normalizeLoadedCard(x)).filter((x): x is IntervalCard => Boolean(x));
   } catch {
     return [];
   }
@@ -326,6 +389,10 @@ function loadCards(): IntervalCard[] {
 function saveCards(cards: IntervalCard[]) {
   localStorage.setItem(CARDS_KEY, JSON.stringify(cards));
 }
+
+/* =========================
+   Prefs Storage
+========================= */
 
 function loadPrefs(): Prefs {
   const defaults: Prefs = { sound: true, vibration: true, countdownBeeps: true };
@@ -348,7 +415,70 @@ function savePrefs(prefs: Prefs) {
 }
 
 /* =========================
-   Sample / Random
+   Profiles Storage
+========================= */
+
+function makeDefaultProfile(): Profile {
+  return { id: makeId(), name: "Ich", createdAt: Date.now() };
+}
+
+function loadProfiles(): Profile[] {
+  try {
+    const raw = localStorage.getItem(PROFILES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((p) => p && typeof p === "object")
+      .map((p) => ({
+        id: typeof p.id === "string" ? p.id : makeId(),
+        name: typeof p.name === "string" ? p.name : "Profil",
+        createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
+      })) as Profile[];
+  } catch {
+    return [];
+  }
+}
+
+function saveProfiles(profiles: Profile[]) {
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+}
+
+function loadActiveProfileId(): string | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_PROFILE_KEY);
+    return raw ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveProfileId(id: string) {
+  localStorage.setItem(ACTIVE_PROFILE_KEY, id);
+}
+
+/* =========================
+   History Storage
+========================= */
+
+function loadHistory(): WorkoutLogEntry[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as WorkoutLogEntry[];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(entries: WorkoutLogEntry[]) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+}
+
+/* =========================
+   Sample / Random Cards
 ========================= */
 
 function makeSampleCard(): TimeCard {
@@ -455,10 +585,75 @@ function beepOnce(freq: number, ms: number, volume = 0.2) {
 }
 
 /* =========================
+   Log Entry Builders
+========================= */
+
+function makeTimeLogEntry(profileId: string, card: TimeCard, plannedTotalSec: number): WorkoutLogEntry {
+  return {
+    id: makeId(),
+    createdAt: Date.now(),
+    profileId,
+    kind: "TIME",
+    cardId: card.id,
+    cardTitle: card.title,
+    time: {
+      exercise: card.exercise.name,
+      plannedTotalSec,
+      sets: card.timing.sets,
+      repsPerSet: card.timing.repsPerSet,
+      workSec: card.timing.workSec,
+      restBetweenSetsSec: card.timing.restBetweenSetsSec,
+    },
+  };
+}
+
+function makeRepLogEntry(profileId: string, card: RepCard): WorkoutLogEntry {
+  const { totalReps, totalKg } = repTotals(card);
+  const breakdown = repBreakdown(card);
+  return {
+    id: makeId(),
+    createdAt: Date.now(),
+    profileId,
+    kind: "REPS",
+    cardId: card.id,
+    cardTitle: card.title,
+    reps: {
+      totalReps,
+      totalKg,
+      setsCount: card.sets.length,
+      restBetweenSetsSec: card.restBetweenSetsSec,
+      targetSetSec: card.targetSetSec,
+      breakdown,
+    },
+  };
+}
+
+/* =========================
    App
 ========================= */
 
+function initProfilesState(): { profiles: Profile[]; activeId: string } {
+  const loaded = loadProfiles();
+  const profiles = loaded.length ? loaded : [makeDefaultProfile()];
+
+  const storedActive = loadActiveProfileId();
+  const activeId =
+    storedActive && profiles.some((p) => p.id === storedActive) ? storedActive : profiles[0].id;
+
+  return { profiles, activeId };
+}
+
 export default function App() {
+  // profiles init in one go (damit kein doppeltes Default-Profil entsteht)
+  const [profileInit] = useState(() => initProfilesState());
+  const [profiles, setProfiles] = useState<Profile[]>(profileInit.profiles);
+  const [activeProfileId, setActiveProfileId] = useState<string>(profileInit.activeId);
+
+  const activeProfile = useMemo(
+    () => profiles.find((p) => p.id === activeProfileId) ?? null,
+    [profiles, activeProfileId]
+  );
+
   const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs());
 
   const [cards, setCards] = useState<IntervalCard[]>(() => {
@@ -466,10 +661,19 @@ export default function App() {
     return loaded.length ? loaded : [makeSampleCard()];
   });
 
+  const [history, setHistory] = useState<WorkoutLogEntry[]>(() => loadHistory());
+
   const [screen, setScreen] = useState<Screen>({ name: "HOME" });
 
   useEffect(() => savePrefs(prefs), [prefs]);
   useEffect(() => saveCards(cards), [cards]);
+  useEffect(() => saveProfiles(profiles), [profiles]);
+  useEffect(() => saveActiveProfileId(activeProfileId), [activeProfileId]);
+  useEffect(() => saveHistory(history), [history]);
+
+  function profileName(id: string) {
+    return profiles.find((p) => p.id === id)?.name ?? "Unbekannt";
+  }
 
   const activeCard = useMemo(() => {
     if (screen.name === "RUN") return cards.find((c) => c.id === screen.id) ?? null;
@@ -523,14 +727,69 @@ export default function App() {
     setCards((prev) => [copy, ...prev]);
   }
 
+  function addHistoryEntry(entry: WorkoutLogEntry) {
+    setHistory((prev) => [entry, ...prev]);
+  }
+
+  function deleteHistoryEntry(id: string) {
+    setHistory((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  function clearHistoryForActiveProfile() {
+    if (!activeProfileId) return;
+    if (!window.confirm("Verlauf für aktuelles Profil wirklich löschen?")) return;
+    setHistory((prev) => prev.filter((e) => e.profileId !== activeProfileId));
+  }
+
+  function addProfile(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const p: Profile = { id: makeId(), name: trimmed, createdAt: Date.now() };
+    setProfiles((prev) => [p, ...prev]);
+    setActiveProfileId(p.id);
+  }
+
+  function renameProfile(id: string, newName: string) {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, name: trimmed } : p)));
+  }
+
+  function removeProfile(id: string) {
+    if (profiles.length <= 1) return;
+    setProfiles((prev) => prev.filter((p) => p.id !== id));
+
+    if (activeProfileId === id) {
+      const remaining = profiles.filter((p) => p.id !== id);
+      setActiveProfileId(remaining[0]?.id ?? "");
+    }
+  }
+
   return (
     <div className="app-shell">
       <div style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
         <h2 style={{ marginTop: 0 }}>Interval Trainer</h2>
 
+        {/* HOME */}
         {screen.name === "HOME" && (
           <>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                Profil:
+                <select value={activeProfileId} onChange={(e) => setActiveProfileId(e.target.value)}>
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button onClick={() => setScreen({ name: "HISTORY" })}>Verlauf</button>
+              <button onClick={() => setScreen({ name: "PROFILES" })}>Profile</button>
+            </div>
+
+            <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={() => setScreen({ name: "EDIT", kind: "TIME" })}>+ Zeit‑Karte</button>
               <button onClick={() => setScreen({ name: "EDIT", kind: "REPS" })}>+ Wdh‑Karte</button>
 
@@ -546,7 +805,6 @@ export default function App() {
 
             <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
               {cards.map((card) => {
-                // REPS
                 if (isRepCard(card)) {
                   const { totalReps, totalKg } = repTotals(card);
 
@@ -555,7 +813,7 @@ export default function App() {
                       <div style={{ fontWeight: 700 }}>{card.title}</div>
 
                       <div style={{ fontSize: 13, marginTop: 6 }}>
-                        {card.sets.length} Sätze · {totalReps} Wdh gesamt · {totalKg.toFixed(1)} kg bewegt
+                        {card.sets.length} Sätze · {totalReps} Wdh gesamt · {totalKg.toFixed(1)} kg bewegt (Zusatzgewicht)
                         {" · "}Pause {formatMMSS(card.restBetweenSetsSec)}
                         {card.targetSetSec ? ` · Zielzeit/Satz ${formatMMSS(card.targetSetSec)}` : ""}
                       </div>
@@ -570,7 +828,6 @@ export default function App() {
                   );
                 }
 
-                // TIME
                 const phases = buildPhases(card);
                 const total = totalSessionSec(phases);
 
@@ -602,6 +859,34 @@ export default function App() {
           </>
         )}
 
+        {/* PROFILES */}
+        {screen.name === "PROFILES" && (
+          <ProfilesView
+            profiles={profiles}
+            activeProfileId={activeProfileId}
+            onBack={() => setScreen({ name: "HOME" })}
+            onSetActive={setActiveProfileId}
+            onAdd={addProfile}
+            onRename={renameProfile}
+            onDelete={removeProfile}
+          />
+        )}
+
+        {/* HISTORY */}
+        {screen.name === "HISTORY" && (
+          <HistoryView
+            entries={history}
+            profiles={profiles}
+            activeProfileId={activeProfileId}
+            onChangeActiveProfile={setActiveProfileId}
+            profileName={profileName}
+            onBack={() => setScreen({ name: "HOME" })}
+            onDeleteEntry={deleteHistoryEntry}
+            onClearActiveProfile={clearHistoryForActiveProfile}
+          />
+        )}
+
+        {/* EDIT */}
         {screen.name === "EDIT" &&
           (() => {
             const editKind: CardKind =
@@ -634,14 +919,24 @@ export default function App() {
             );
           })()}
 
+        {/* RUN */}
         {screen.name === "RUN" && activeCard && (
           isRepCard(activeCard) ? (
-            <RepRunner card={activeCard} onBack={() => setScreen({ name: "HOME" })} />
+            <RepRunner
+              card={activeCard}
+              profileId={activeProfileId}
+              profileName={activeProfile?.name ?? "Unbekannt"}
+              onSaveLog={addHistoryEntry}
+              onBack={() => setScreen({ name: "HOME" })}
+            />
           ) : (
             <Runner
               card={activeCard}
               prefs={prefs}
               onPrefsChange={setPrefs}
+              profileId={activeProfileId}
+              profileName={activeProfile?.name ?? "Unbekannt"}
+              onSaveLog={addHistoryEntry}
               onBack={() => setScreen({ name: "HOME" })}
             />
           )
@@ -890,8 +1185,8 @@ function RepEditor({
               step={0.5}
               value={s.weightKg}
               onChange={(e) => updateSet(s.id, { weightKg: Number(e.target.value) })}
-              style={{ width: 110 }}
-              title="kg"
+              style={{ width: 130 }}
+              title="Zusatzgewicht (kg)"
             />
 
             <button onClick={() => removeSet(s.id)}>✕</button>
@@ -900,7 +1195,7 @@ function RepEditor({
       </div>
 
       <div style={{ fontSize: 13, opacity: 0.8 }}>
-        Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt
+        Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -971,11 +1266,18 @@ function Runner({
   prefs,
   onPrefsChange,
   onBack,
+  profileId,
+  profileName,
+  onSaveLog,
 }: {
   card: TimeCard;
   prefs: Prefs;
   onPrefsChange: (p: Prefs) => void;
   onBack: () => void;
+
+  profileId: string;
+  profileName: string;
+  onSaveLog: (entry: WorkoutLogEntry) => void;
 }) {
   const phases = useMemo(() => buildPhases(card), [card]);
   const total = useMemo(() => totalSessionSec(phases), [phases]);
@@ -986,6 +1288,9 @@ function Runner({
     remainingSec: phases[0]?.durationSec ?? 0,
     totalRemainingSec: total,
   }));
+
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setSaved(false), [card.id, profileId]);
 
   useEffect(() => {
     setRunner({
@@ -1099,9 +1404,18 @@ function Runner({
     });
   }
 
+  function saveToHistory() {
+    if (saved) return;
+    if (!profileId) return;
+    const entry = makeTimeLogEntry(profileId, card, total);
+    onSaveLog(entry);
+    setSaved(true);
+  }
+
   return (
     <div style={{ marginTop: 16 }}>
-      <h3 style={{ marginTop: 0 }}>{card.title}</h3>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>Profil: <b>{profileName}</b></div>
+      <h3 style={{ marginTop: 6 }}>{card.title}</h3>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
         <div style={{ fontSize: 14, opacity: 0.8 }}>{phase.label}</div>
@@ -1168,6 +1482,13 @@ function Runner({
       {runner.status === "FINISHED" && (
         <div style={{ marginTop: 12, background: "#e8ffe8", padding: 10, borderRadius: 10 }}>
           ✅ Fertig!
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {!saved ? (
+              <button onClick={saveToHistory}>In Verlauf speichern</button>
+            ) : (
+              <span style={{ fontWeight: 700 }}>Gespeichert ✅</span>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1181,15 +1502,25 @@ function Runner({
 function RepRunner({
   card,
   onBack,
+  profileId,
+  profileName,
+  onSaveLog,
 }: {
   card: RepCard;
   onBack: () => void;
+
+  profileId: string;
+  profileName: string;
+  onSaveLog: (entry: WorkoutLogEntry) => void;
 }) {
   type Stage = "READY" | "SET" | "REST" | "DONE";
   const [idx, setIdx] = useState(0);
   const [stage, setStage] = useState<Stage>("READY");
   const [running, setRunning] = useState(false);
   const [t, setT] = useState(0);
+
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setSaved(false), [card.id, profileId]);
 
   useEffect(() => {
     if (!running) return;
@@ -1239,13 +1570,23 @@ function RepRunner({
 
   const breakdown = repBreakdown(card);
 
+  function saveToHistory() {
+    if (saved) return;
+    if (!profileId) return;
+    const entry = makeRepLogEntry(profileId, card);
+    onSaveLog(entry);
+    setSaved(true);
+  }
+
   return (
     <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
       <button onClick={onBack}>← Zurück</button>
 
+      <div style={{ fontSize: 12, opacity: 0.7 }}>Profil: <b>{profileName}</b></div>
       <div style={{ fontWeight: 800, fontSize: 18 }}>{card.title}</div>
+
       <div style={{ fontSize: 13, opacity: 0.8 }}>
-        Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg bewegt
+        Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg bewegt (Zusatzgewicht)
       </div>
 
       {stage === "READY" && <button onClick={startWorkout}>Start</button>}
@@ -1257,7 +1598,7 @@ function RepRunner({
           </div>
 
           <div style={{ marginTop: 6 }}>
-            <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg
+            <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg Zusatzgewicht
           </div>
 
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>
@@ -1293,7 +1634,7 @@ function RepRunner({
           <div style={{ fontWeight: 800 }}>Fertig ✅</div>
 
           <div style={{ marginTop: 8 }}>
-            Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt
+            Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
           </div>
 
           <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
@@ -1305,11 +1646,246 @@ function RepRunner({
           </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {!saved ? (
+              <button onClick={saveToHistory}>In Verlauf speichern</button>
+            ) : (
+              <span style={{ fontWeight: 700 }}>Gespeichert ✅</span>
+            )}
             <button onClick={startWorkout}>Nochmal</button>
             <button onClick={onBack}>Zurück</button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* =========================
+   Profiles View
+========================= */
+
+function ProfilesView({
+  profiles,
+  activeProfileId,
+  onSetActive,
+  onAdd,
+  onRename,
+  onDelete,
+  onBack,
+}: {
+  profiles: Profile[];
+  activeProfileId: string;
+  onSetActive: (id: string) => void;
+  onAdd: (name: string) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+  onBack: () => void;
+}) {
+  const [newName, setNewName] = useState("");
+
+  return (
+    <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+      <button onClick={onBack}>← Zurück</button>
+
+      <h3 style={{ marginTop: 0 }}>Profile</h3>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input
+          placeholder="Neues Profil (z.B. Denis, Team A)"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          style={{ flex: "1 1 220px" }}
+        />
+        <button
+          onClick={() => {
+            onAdd(newName);
+            setNewName("");
+          }}
+        >
+          Hinzufügen
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        {profiles.map((p) => (
+          <div key={p.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+            <div style={{ fontWeight: 800 }}>
+              {p.name} {p.id === activeProfileId ? "✅" : ""}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+              Erstellt: {formatDateTime(p.createdAt)}
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {p.id !== activeProfileId ? (
+                <button onClick={() => onSetActive(p.id)}>Aktiv setzen</button>
+              ) : (
+                <button disabled>Aktiv</button>
+              )}
+
+              <button
+                onClick={() => {
+                  const next = window.prompt("Neuer Name:", p.name);
+                  if (next && next.trim()) onRename(p.id, next.trim());
+                }}
+              >
+                Umbenennen
+              </button>
+
+              <button
+                onClick={() => {
+                  if (profiles.length <= 1) return;
+                  if (!window.confirm("Profil löschen? (Verlauf bleibt gespeichert.)")) return;
+                  onDelete(p.id);
+                }}
+                disabled={profiles.length <= 1}
+              >
+                Löschen
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.7 }}>
+        Hinweis: Profile sind „Person oder Gruppe“. Der Verlauf wird pro Profil gespeichert.
+      </div>
+    </div>
+  );
+}
+
+/* =========================
+   History View
+========================= */
+
+function HistoryView({
+  entries,
+  profiles,
+  activeProfileId,
+  onChangeActiveProfile,
+  profileName,
+  onBack,
+  onDeleteEntry,
+  onClearActiveProfile,
+}: {
+  entries: WorkoutLogEntry[];
+  profiles: Profile[];
+  activeProfileId: string;
+  onChangeActiveProfile: (id: string) => void;
+  profileName: (id: string) => string;
+  onBack: () => void;
+  onDeleteEntry: (id: string) => void;
+  onClearActiveProfile: () => void;
+}) {
+  const filtered = useMemo(() => {
+    return entries
+      .filter((e) => e.profileId === activeProfileId)
+      .slice()
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [entries, activeProfileId]);
+
+  const stats = useMemo(() => {
+    const now = Date.now();
+    const from = now - 7 * 24 * 60 * 60 * 1000;
+
+    const last7 = filtered.filter((e) => e.createdAt >= from);
+
+    const timeSec = last7.reduce((sum, e) => sum + (e.kind === "TIME" ? e.time?.plannedTotalSec ?? 0 : 0), 0);
+    const repsTotal = last7.reduce((sum, e) => sum + (e.kind === "REPS" ? e.reps?.totalReps ?? 0 : 0), 0);
+    const kgTotal = last7.reduce((sum, e) => sum + (e.kind === "REPS" ? e.reps?.totalKg ?? 0 : 0), 0);
+
+    const bestKg = filtered.reduce((max, e) => Math.max(max, e.kind === "REPS" ? e.reps?.totalKg ?? 0 : 0), 0);
+
+    return {
+      count7: last7.length,
+      timeSec,
+      repsTotal,
+      kgTotal,
+      bestKg,
+    };
+  }, [filtered]);
+
+  return (
+    <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+      <button onClick={onBack}>← Zurück</button>
+
+      <h3 style={{ marginTop: 0 }}>Verlauf</h3>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          Profil:
+          <select value={activeProfileId} onChange={(e) => onChangeActiveProfile(e.target.value)}>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button onClick={onClearActiveProfile}>Verlauf löschen (Profil)</button>
+      </div>
+
+      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+        <div style={{ fontWeight: 800 }}>7‑Tage Übersicht ({profileName(activeProfileId)})</div>
+        <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
+          Sessions: <b>{stats.count7}</b>
+          {" · "}Zeit geplant: <b>{formatMMSS(stats.timeSec)}</b>
+          {" · "}Wdh: <b>{stats.repsTotal}</b>
+          {" · "}kg bewegt (Zusatz): <b>{stats.kgTotal.toFixed(1)}</b>
+        </div>
+        <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
+          Bestwert (REPS): <b>{stats.bestKg.toFixed(1)}</b> kg bewegt in einer Session
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ fontSize: 13, opacity: 0.8 }}>
+          Noch keine Einträge. Starte eine Session und klicke am Ende auf <b>„In Verlauf speichern“</b>.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {filtered.map((e) => (
+            <div key={e.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>{formatDateTime(e.createdAt)}</div>
+
+              <div style={{ fontWeight: 800, marginTop: 4 }}>
+                {e.kind === "TIME" ? "⏱️" : "🏋️"} {e.cardTitle}
+              </div>
+
+              {e.kind === "TIME" && e.time ? (
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
+                  Übung: <b>{e.time.exercise}</b> · Plan: <b>{formatMMSS(e.time.plannedTotalSec)}</b>
+                  <br />
+                  {e.time.sets} Sätze · {e.time.repsPerSet} Wdh/Satz · Arbeit {formatMMSS(e.time.workSec)}
+                </div>
+              ) : null}
+
+              {e.kind === "REPS" && e.reps ? (
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
+                  {e.reps.setsCount} Sätze · <b>{e.reps.totalReps}</b> Wdh ·{" "}
+                  <b>{e.reps.totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
+                </div>
+              ) : null}
+
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => {
+                    if (!window.confirm("Eintrag löschen?")) return;
+                    onDeleteEntry(e.id);
+                  }}
+                >
+                  Löschen
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, opacity: 0.7 }}>
+        Hinweis: Bei REPS ist „kg bewegt“ = Wiederholungen × Zusatzgewicht (Körpergewicht wird nicht mitgerechnet).
+      </div>
     </div>
   );
 }

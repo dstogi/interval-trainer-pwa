@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
+/* =========================
+   Types
+========================= */
+
 type PhaseType = "WARMUP" | "WORK" | "REST" | "COOLDOWN";
 type RunStatus = "IDLE" | "RUNNING" | "PAUSED" | "FINISHED";
-
 type RestKind = "REP" | "SET" | null;
 
 type TimingConfig = {
@@ -30,16 +33,8 @@ type TimeCard = {
   title: string;
   createdAt: number;
   updatedAt: number;
-  exercise: { name: string; notes: string };
-  timing: {
-    warmupSec: number;
-    workSec: number;
-    restBetweenRepsSec: number;
-    repsPerSet: number;
-    restBetweenSetsSec: number;
-    sets: number;
-    cooldownSec: number;
-  };
+  exercise: Exercise;
+  timing: TimingConfig;
 };
 
 type RepSet = {
@@ -55,15 +50,13 @@ type RepCard = {
   title: string;
   createdAt: number;
   updatedAt: number;
-
   sets: RepSet[];
-  restBetweenSetsSec: number; // Pause nach jedem Satz
-  targetSetSec?: number;      // optional Zielzeit pro Satz
+  restBetweenSetsSec: number;
+  targetSetSec?: number;
 };
 
 type IntervalCard = TimeCard | RepCard;
 
-// ---- Helper für Type Narrowing + Summen
 function isRepCard(card: IntervalCard): card is RepCard {
   return (card as any).kind === "REPS";
 }
@@ -101,12 +94,27 @@ type Prefs = {
   countdownBeeps: boolean;
 };
 
+type Screen =
+  | { name: "HOME" }
+  | { name: "EDIT"; id?: string; kind?: CardKind }
+  | { name: "RUN"; id: string };
+
+type RunnerState = {
+  status: RunStatus;
+  phaseIndex: number;
+  remainingSec: number;
+  totalRemainingSec: number;
+};
+
+/* =========================
+   Storage / Helpers
+========================= */
+
 const CARDS_KEY = "interval_trainer_cards_v1";
 const PREFS_KEY = "interval_trainer_prefs_v1";
 
 function makeId(): string {
   try {
-    // modern browsers
     return crypto.randomUUID();
   } catch {
     return Math.random().toString(16).slice(2) + Date.now().toString(16);
@@ -136,6 +144,16 @@ function parseTimeToSec(input: string): number {
   return Math.max(0, Math.trunc(n));
 }
 
+/**
+ * parseMMSS: wie parseTimeToSec, aber gibt null zurück wenn leer
+ * -> praktisch für optional Felder (z.B. Zielzeit im RepEditor)
+ */
+function parseMMSS(input: string): number | null {
+  const s = input.trim();
+  if (!s) return null;
+  return parseTimeToSec(s);
+}
+
 function formatMMSS(totalSec: number): string {
   const sec = Math.max(0, Math.trunc(totalSec));
   const m = Math.floor(sec / 60);
@@ -143,7 +161,12 @@ function formatMMSS(totalSec: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function buildPhases(card: IntervalCard): Phase[] {
+/* =========================
+   TIME: Phasen bauen
+   WICHTIG: nur für TimeCard!
+========================= */
+
+function buildPhases(card: TimeCard): Phase[] {
   const t = card.timing;
   const sets = Math.max(1, t.sets);
   const reps = Math.max(1, t.repsPerSet);
@@ -174,7 +197,6 @@ function buildPhases(card: IntervalCard): Phase[] {
         });
       }
 
-      // Pause zwischen Wiederholungen (außer nach letzter Wdh im Satz)
       if (r < reps && t.restBetweenRepsSec > 0) {
         phases.push({
           type: "REST",
@@ -187,7 +209,6 @@ function buildPhases(card: IntervalCard): Phase[] {
       }
     }
 
-    // Satzpause (außer nach letztem Satz)
     if (s < sets && t.restBetweenSetsSec > 0) {
       phases.push({
         type: "REST",
@@ -211,7 +232,6 @@ function buildPhases(card: IntervalCard): Phase[] {
     });
   }
 
-  // Falls alles 0 war: Notfall-Phase, damit Runner nicht crasht
   if (phases.length === 0) {
     phases.push({
       type: "WORK",
@@ -236,13 +256,68 @@ function computeRemainingTotal(phases: Phase[], idx: number, remainingSec: numbe
   return total;
 }
 
+function normalizeLoadedCard(raw: any): IntervalCard | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  // REPS
+  if (raw.kind === "REPS") {
+    const setsRaw = Array.isArray(raw.sets) ? raw.sets : [];
+    const sets: RepSet[] = setsRaw.map((s: any) => ({
+      id: typeof s?.id === "string" ? s.id : makeId(),
+      exercise: typeof s?.exercise === "string" ? s.exercise : "",
+      reps: Number(s?.reps) || 0,
+      weightKg: Number(s?.weightKg) || 0,
+    }));
+
+    return {
+      kind: "REPS",
+      id: typeof raw.id === "string" ? raw.id : makeId(),
+      title: typeof raw.title === "string" ? raw.title : "Wdh‑Session",
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+      sets: sets.length ? sets : [{ id: makeId(), exercise: "", reps: 10, weightKg: 0 }],
+      restBetweenSetsSec: typeof raw.restBetweenSetsSec === "number" ? raw.restBetweenSetsSec : 60,
+      targetSetSec: typeof raw.targetSetSec === "number" ? raw.targetSetSec : undefined,
+    };
+  }
+
+  // TIME (alte Karten können ohne "kind" kommen)
+  if (raw.timing && raw.exercise) {
+    const t = raw.timing ?? {};
+    return {
+      kind: "TIME",
+      id: typeof raw.id === "string" ? raw.id : makeId(),
+      title: typeof raw.title === "string" ? raw.title : "Interval",
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+      exercise: {
+        name: typeof raw.exercise?.name === "string" ? raw.exercise.name : "",
+        notes: typeof raw.exercise?.notes === "string" ? raw.exercise.notes : "",
+      },
+      timing: {
+        warmupSec: Number(t.warmupSec) || 0,
+        workSec: Number(t.workSec) || 20,
+        restBetweenRepsSec: Number(t.restBetweenRepsSec) || 0,
+        repsPerSet: Number(t.repsPerSet) || 1,
+        restBetweenSetsSec: Number(t.restBetweenSetsSec) || 60,
+        sets: Number(t.sets) || 4,
+        cooldownSec: Number(t.cooldownSec) || 0,
+      },
+    };
+  }
+
+  return null;
+}
+
 function loadCards(): IntervalCard[] {
   try {
     const raw = localStorage.getItem(CARDS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed as IntervalCard[];
+    return parsed
+      .map((x) => normalizeLoadedCard(x))
+      .filter((x): x is IntervalCard => Boolean(x));
   } catch {
     return [];
   }
@@ -272,9 +347,14 @@ function savePrefs(prefs: Prefs) {
   localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
 }
 
-function makeSampleCard(): IntervalCard {
+/* =========================
+   Sample / Random
+========================= */
+
+function makeSampleCard(): TimeCard {
   const now = Date.now();
   return {
+    kind: "TIME",
     id: makeId(),
     title: "HIIT Kurz",
     exercise: { name: "Liegestütze", notes: "" },
@@ -292,14 +372,15 @@ function makeSampleCard(): IntervalCard {
   };
 }
 
-function makeRandomCard(): IntervalCard {
+function makeRandomCard(): TimeCard {
   const exercises = ["Liegestütze", "Kniebeugen", "Mountain Climbers", "Burpees", "Plank", "Ausfallschritte"];
   const name = exercises[Math.floor(Math.random() * exercises.length)];
-  const sets = clampInt(3 + Math.floor(Math.random() * 4), 2, 8); // 3..6
+  const sets = clampInt(3 + Math.floor(Math.random() * 4), 2, 8);
   const work = [20, 30, 40][Math.floor(Math.random() * 3)];
   const restSet = [30, 45, 60][Math.floor(Math.random() * 3)];
   const now = Date.now();
   return {
+    kind: "TIME",
     id: makeId(),
     title: `Zufall – ${name}`,
     exercise: { name, notes: "" },
@@ -326,8 +407,8 @@ function makeRandomRepCard(): RepCard {
 
   const sets: RepSet[] = Array.from({ length: setsCount }, () => {
     const exercise = sameExercise ? base : pool[Math.floor(Math.random() * pool.length)];
-    const reps = 6 + Math.floor(Math.random() * 10); // 6..15
-    const weightKg = Math.random() < 0.5 ? 0 : 2.5 * (1 + Math.floor(Math.random() * 8)); // 2.5..20
+    const reps = 6 + Math.floor(Math.random() * 10);
+    const weightKg = Math.random() < 0.5 ? 0 : 2.5 * (1 + Math.floor(Math.random() * 8));
     return { id: makeId(), exercise, reps, weightKg };
   });
 
@@ -343,17 +424,9 @@ function makeRandomRepCard(): RepCard {
   };
 }
 
-type Screen =
-  | { name: "HOME" }
-  | { name: "EDIT"; id?: string; kind?: CardKind }
-  | { name: "RUN"; id: string };
-
-type RunnerState = {
-  status: RunStatus;
-  phaseIndex: number;
-  remainingSec: number;
-  totalRemainingSec: number;
-};
+/* =========================
+   Beep
+========================= */
 
 function beepOnce(freq: number, ms: number, volume = 0.2) {
   const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext | undefined;
@@ -366,7 +439,6 @@ function beepOnce(freq: number, ms: number, volume = 0.2) {
   osc.type = "sine";
   osc.frequency.value = freq;
 
-  // soft envelope
   gain.gain.setValueAtTime(0.0001, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(volume, ctx.currentTime + 0.01);
   gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + ms / 1000);
@@ -377,11 +449,14 @@ function beepOnce(freq: number, ms: number, volume = 0.2) {
   osc.start();
   osc.stop(ctx.currentTime + ms / 1000);
 
-  // close context after beep
   setTimeout(() => {
     ctx.close().catch(() => {});
   }, ms + 50);
 }
+
+/* =========================
+   App
+========================= */
 
 export default function App() {
   const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs());
@@ -418,175 +493,176 @@ export default function App() {
     setCards((prev) => prev.filter((c) => c.id !== id));
   }
 
-function duplicateCard(id: string) {
-  const original = cards.find((c) => c.id === id);
-  if (!original) return;
+  function duplicateCard(id: string) {
+    const original = cards.find((c) => c.id === id);
+    if (!original) return;
 
-  const now = Date.now();
+    const now = Date.now();
 
-  if (isRepCard(original)) {
-    const copy: RepCard = {
+    if (isRepCard(original)) {
+      const copy: RepCard = {
+        ...original,
+        id: makeId(),
+        title: original.title + " (Kopie)",
+        createdAt: now,
+        updatedAt: now,
+        sets: original.sets.map((s) => ({ ...s, id: makeId() })),
+      };
+      setCards((prev) => [copy, ...prev]);
+      return;
+    }
+
+    const copy: TimeCard = {
       ...original,
+      kind: "TIME",
       id: makeId(),
       title: original.title + " (Kopie)",
       createdAt: now,
       updatedAt: now,
-      sets: original.sets.map((s) => ({ ...s, id: makeId() })),
     };
     setCards((prev) => [copy, ...prev]);
-    return;
   }
 
-  const copy: TimeCard = {
-    ...original,
-    id: makeId(),
-    title: original.title + " (Kopie)",
-    createdAt: now,
-    updatedAt: now,
-    kind: "TIME",
-  };
-  setCards((prev) => [copy, ...prev]);
-}
-
   return (
-  <div className="app-shell">
-    <div style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Interval Trainer</h2>
+    <div className="app-shell">
+      <div style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
+        <h2 style={{ marginTop: 0 }}>Interval Trainer</h2>
 
-      {screen.name === "HOME" && (
-        <>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-<button onClick={() => setScreen({ name: "EDIT", kind: "TIME" })}>+ Zeit‑Karte</button>
-<button onClick={() => setScreen({ name: "EDIT", kind: "REPS" })}>+ Wdh‑Karte</button>
+        {screen.name === "HOME" && (
+          <>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={() => setScreen({ name: "EDIT", kind: "TIME" })}>+ Zeit‑Karte</button>
+              <button onClick={() => setScreen({ name: "EDIT", kind: "REPS" })}>+ Wdh‑Karte</button>
 
-<button
-  onClick={() => {
-    const c = Math.random() < 0.5 ? makeRandomCard() : makeRandomRepCard();
-    upsertCard(c);
-  }}
->
-  🎲 Zufalls‑Session
-</button>
-          </div>
+              <button
+                onClick={() => {
+                  const c = Math.random() < 0.5 ? makeRandomCard() : makeRandomRepCard();
+                  upsertCard(c);
+                }}
+              >
+                🎲 Zufalls‑Session
+              </button>
+            </div>
 
-          <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-{cards.map((card) => {
-  // --- REPS Card ---
-  if (isRepCard(card)) {
-    const { totalReps, totalKg } = repTotals(card);
+            <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+              {cards.map((card) => {
+                // REPS
+                if (isRepCard(card)) {
+                  const { totalReps, totalKg } = repTotals(card);
 
-    return (
-      <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-        <div style={{ fontWeight: 700 }}>{card.title}</div>
+                  return (
+                    <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+                      <div style={{ fontWeight: 700 }}>{card.title}</div>
 
-        <div style={{ fontSize: 13, marginTop: 6 }}>
-          {card.sets.length} Sätze · {totalReps} Wdh gesamt · {totalKg.toFixed(1)} kg bewegt
-          {" · "}Pause {formatMMSS(card.restBetweenSetsSec)}
-          {card.targetSetSec ? ` · Zielzeit/Satz ${formatMMSS(card.targetSetSec)}` : ""}
-        </div>
+                      <div style={{ fontSize: 13, marginTop: 6 }}>
+                        {card.sets.length} Sätze · {totalReps} Wdh gesamt · {totalKg.toFixed(1)} kg bewegt
+                        {" · "}Pause {formatMMSS(card.restBetweenSetsSec)}
+                        {card.targetSetSec ? ` · Zielzeit/Satz ${formatMMSS(card.targetSetSec)}` : ""}
+                      </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-          <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
-          <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
-          <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
-          <button onClick={() => deleteCard(card.id)}>Löschen</button>
-        </div>
-      </div>
-    );
-  }
+                      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                        <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
+                        <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
+                        <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
+                        <button onClick={() => deleteCard(card.id)}>Löschen</button>
+                      </div>
+                    </div>
+                  );
+                }
 
-  // --- TIME Card (wie bisher) ---
-  const phases = buildPhases(card);
-  const total = totalSessionSec(phases);
+                // TIME
+                const phases = buildPhases(card);
+                const total = totalSessionSec(phases);
 
-  return (
-    <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-      <div style={{ fontWeight: 700 }}>{card.title}</div>
-      <div style={{ fontSize: 14, opacity: 0.8 }}>Übung: {card.exercise.name || "—"}</div>
+                return (
+                  <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+                    <div style={{ fontWeight: 700 }}>{card.title}</div>
+                    <div style={{ fontSize: 14, opacity: 0.8 }}>Übung: {card.exercise.name || "—"}</div>
 
-      <div style={{ fontSize: 13, marginTop: 6 }}>
-        {card.timing.sets} Sätze · {card.timing.repsPerSet} Wdh/Satz · Arbeit {formatMMSS(card.timing.workSec)}
-        {" · "}Satzpause {formatMMSS(card.timing.restBetweenSetsSec)}
-        {" · "}Gesamt {formatMMSS(total)}
-      </div>
+                    <div style={{ fontSize: 13, marginTop: 6 }}>
+                      {card.timing.sets} Sätze · {card.timing.repsPerSet} Wdh/Satz · Arbeit {formatMMSS(card.timing.workSec)}
+                      {" · "}Satzpause {formatMMSS(card.timing.restBetweenSetsSec)}
+                      {" · "}Gesamt {formatMMSS(total)}
+                    </div>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-        <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
-        <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
-        <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
-        <button onClick={() => deleteCard(card.id)}>Löschen</button>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                      <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
+                      <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
+                      <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
+                      <button onClick={() => deleteCard(card.id)}>Löschen</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 18, fontSize: 12, opacity: 0.7 }}>
+              Tipp fürs iPhone: Safari → Share → <b>Zum Home‑Bildschirm</b>.
+            </div>
+          </>
+        )}
+
+        {screen.name === "EDIT" &&
+          (() => {
+            const editKind: CardKind =
+              activeCard ? (isRepCard(activeCard) ? "REPS" : "TIME") : screen.kind ?? "TIME";
+
+            if (editKind === "REPS") {
+              const initial = activeCard && isRepCard(activeCard) ? activeCard : null;
+              return (
+                <RepEditor
+                  initial={initial}
+                  onCancel={() => setScreen({ name: "HOME" })}
+                  onSave={(saved) => {
+                    upsertCard(saved);
+                    setScreen({ name: "HOME" });
+                  }}
+                />
+              );
+            }
+
+            const initial = activeCard && !isRepCard(activeCard) ? activeCard : null;
+            return (
+              <Editor
+                initial={initial}
+                onCancel={() => setScreen({ name: "HOME" })}
+                onSave={(saved) => {
+                  upsertCard(saved);
+                  setScreen({ name: "HOME" });
+                }}
+              />
+            );
+          })()}
+
+        {screen.name === "RUN" && activeCard && (
+          isRepCard(activeCard) ? (
+            <RepRunner card={activeCard} onBack={() => setScreen({ name: "HOME" })} />
+          ) : (
+            <Runner
+              card={activeCard}
+              prefs={prefs}
+              onPrefsChange={setPrefs}
+              onBack={() => setScreen({ name: "HOME" })}
+            />
+          )
+        )}
       </div>
     </div>
   );
-})}
-          </div>
-
-          <div style={{ marginTop: 18, fontSize: 12, opacity: 0.7 }}>
-            Tipp fürs iPhone: Safari → Share → <b>Zum Home‑Bildschirm</b>.
-          </div>
-        </>
-      )}
-
-{screen.name === "EDIT" && (() => {
-  const editKind: CardKind =
-    activeCard ? (isRepCard(activeCard) ? "REPS" : "TIME") : (screen.kind ?? "TIME");
-
-  if (editKind === "REPS") {
-    const initial = activeCard && isRepCard(activeCard) ? activeCard : null;
-    return (
-      <RepEditor
-        initial={initial}
-        onCancel={() => setScreen({ name: "HOME" })}
-        onSave={(saved) => {
-          upsertCard(saved);
-          setScreen({ name: "HOME" });
-        }}
-      />
-    );
-  }
-
-  const initial = activeCard && !isRepCard(activeCard) ? activeCard : null;
-  return (
-    <Editor
-      initial={initial}
-      onCancel={() => setScreen({ name: "HOME" })}
-      onSave={(saved) => {
-        upsertCard(saved);
-        setScreen({ name: "HOME" });
-      }}
-    />
-  );
-})()}
-
-
-{screen.name === "RUN" && activeCard && (
-  isRepCard(activeCard) ? (
-    <RepRunner
-      card={activeCard}
-      onBack={() => setScreen({ name: "HOME" })}
-    />
-  ) : (
-    <Runner
-      card={activeCard}
-      prefs={prefs}
-      onPrefsChange={setPrefs}
-      onBack={() => setScreen({ name: "HOME" })}
-    />
-  )
-)}
-
-    </div>
-  </div>
-);
 }
+
+/* =========================
+   TIME Editor
+========================= */
+
 function Editor({
   initial,
   onCancel,
   onSave,
 }: {
-  initial: IntervalCard | null;
+  initial: TimeCard | null;
   onCancel: () => void;
-  onSave: (card: IntervalCard) => void;
+  onSave: (card: TimeCard) => void;
 }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [exercise, setExercise] = useState(initial?.exercise.name ?? "");
@@ -619,7 +695,85 @@ function Editor({
       setError("Bitte einen Titel eingeben.");
       return;
     }
-    function RepEditor({
+    if (!exercise.trim()) {
+      setError("Bitte eine Übung eingeben (z.B. Liegestütze).");
+      return;
+    }
+    if (timing.workSec <= 0) {
+      setError("Arbeitszeit muss > 0 sein.");
+      return;
+    }
+
+    const now = Date.now();
+    const saved: TimeCard = {
+      kind: "TIME",
+      id: initial?.id ?? makeId(),
+      title: title.trim(),
+      exercise: { name: exercise.trim(), notes: notes.trim() },
+      timing,
+      createdAt: initial?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    onSave(saved);
+  }
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <h3 style={{ marginTop: 0 }}>{initial ? "Karte bearbeiten" : "Neue Zeit‑Karte"}</h3>
+
+      {error && (
+        <div style={{ background: "#ffe5e5", padding: 10, borderRadius: 10, marginBottom: 10 }}>
+          <b>Fehler:</b> {error}
+        </div>
+      )}
+
+      <label style={{ display: "block", marginBottom: 8 }}>
+        Titel
+        <input style={{ width: "100%" }} value={title} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+
+      <label style={{ display: "block", marginBottom: 8 }}>
+        Übung (z.B. Liegestütze)
+        <input style={{ width: "100%" }} value={exercise} onChange={(e) => setExercise(e.target.value)} />
+      </label>
+
+      <label style={{ display: "block", marginBottom: 8 }}>
+        Notizen (optional)
+        <input style={{ width: "100%" }} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
+
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+        <TimeField label="Warmup" value={warmup} onChange={setWarmup} />
+        <TimeField label="Cooldown" value={cooldown} onChange={setCooldown} />
+
+        <TimeField label="Arbeit (mm:ss)" value={work} onChange={setWork} />
+        <TimeField label="Pause Wdh (mm:ss)" value={restRep} onChange={setRestRep} />
+
+        <NumberField label="Wiederholungen pro Satz" value={repsPerSet} onChange={setRepsPerSet} />
+        <NumberField label="Sätze" value={sets} onChange={setSets} />
+
+        <TimeField label="Satzpause (mm:ss)" value={restSet} onChange={setRestSet} />
+        <div />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={save}>Speichern</button>
+        <button onClick={onCancel}>Abbrechen</button>
+      </div>
+
+      <div style={{ marginTop: 12, fontSize: 12, opacity: 0.7 }}>
+        Tipp: Zeitformat entweder <b>mm:ss</b> (z.B. 01:00) oder einfach Sekunden (z.B. 60).
+      </div>
+    </div>
+  );
+}
+
+/* =========================
+   REPS Editor
+========================= */
+
+function RepEditor({
   initial,
   onCancel,
   onSave,
@@ -678,10 +832,12 @@ function Editor({
   const { totalReps, totalKg } = repTotals(previewCard);
 
   return (
-    <div style={{ display: "grid", gap: 10 }}>
+    <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+      <h3 style={{ marginTop: 0 }}>{initial ? "Wdh‑Karte bearbeiten" : "Neue Wdh‑Karte"}</h3>
+
       <label>
         Titel
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input style={{ width: "100%" }} value={title} onChange={(e) => setTitle(e.target.value)} />
       </label>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -777,78 +933,9 @@ function Editor({
   );
 }
 
-    if (!exercise.trim()) {
-      setError("Bitte eine Übung eingeben (z.B. Liegestütze).");
-      return;
-    }
-    if (timing.workSec <= 0) {
-      setError("Arbeitszeit muss > 0 sein.");
-      return;
-    }
-
-    const now = Date.now();
-    const saved: IntervalCard = {
-      id: initial?.id ?? makeId(),
-      title: title.trim(),
-      exercise: { name: exercise.trim(), notes: notes.trim() },
-      timing,
-      createdAt: initial?.createdAt ?? now,
-      updatedAt: now,
-    };
-
-    onSave(saved);
-  }
-
-  return (
-    <div style={{ marginTop: 16 }}>
-      <h3 style={{ marginTop: 0 }}>{initial ? "Karte bearbeiten" : "Neue Karte"}</h3>
-
-      {error && (
-        <div style={{ background: "#ffe5e5", padding: 10, borderRadius: 10, marginBottom: 10 }}>
-          <b>Fehler:</b> {error}
-        </div>
-      )}
-
-      <label style={{ display: "block", marginBottom: 8 }}>
-        Titel
-        <input style={{ width: "100%" }} value={title} onChange={(e) => setTitle(e.target.value)} />
-      </label>
-
-      <label style={{ display: "block", marginBottom: 8 }}>
-        Übung (z.B. Liegestütze)
-        <input style={{ width: "100%" }} value={exercise} onChange={(e) => setExercise(e.target.value)} />
-      </label>
-
-      <label style={{ display: "block", marginBottom: 8 }}>
-        Notizen (optional)
-        <input style={{ width: "100%" }} value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </label>
-
-      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
-        <TimeField label="Warmup" value={warmup} onChange={setWarmup} />
-        <TimeField label="Cooldown" value={cooldown} onChange={setCooldown} />
-
-        <TimeField label="Arbeit (mm:ss)" value={work} onChange={setWork} />
-        <TimeField label="Pause Wdh (mm:ss)" value={restRep} onChange={setRestRep} />
-
-        <NumberField label="Wiederholungen pro Satz" value={repsPerSet} onChange={setRepsPerSet} />
-        <NumberField label="Sätze" value={sets} onChange={setSets} />
-
-        <TimeField label="Satzpause (mm:ss)" value={restSet} onChange={setRestSet} />
-        <div />
-      </div>
-
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={save}>Speichern</button>
-        <button onClick={onCancel}>Abbrechen</button>
-      </div>
-
-      <div style={{ marginTop: 12, fontSize: 12, opacity: 0.7 }}>
-        Tipp: Zeitformat entweder <b>mm:ss</b> (z.B. 01:00) oder einfach Sekunden (z.B. 60).
-      </div>
-    </div>
-  );
-}
+/* =========================
+   Small Fields
+========================= */
 
 function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
@@ -875,13 +962,17 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
   );
 }
 
+/* =========================
+   TIME Runner
+========================= */
+
 function Runner({
   card,
   prefs,
   onPrefsChange,
   onBack,
 }: {
-  card: IntervalCard;
+  card: TimeCard;
   prefs: Prefs;
   onPrefsChange: (p: Prefs) => void;
   onBack: () => void;
@@ -896,7 +987,6 @@ function Runner({
     totalRemainingSec: total,
   }));
 
-  // Reset when card changes
   useEffect(() => {
     setRunner({
       status: "IDLE",
@@ -906,7 +996,6 @@ function Runner({
     });
   }, [card.id, total, phases]);
 
-  // Tick each second while running
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
 
@@ -914,7 +1003,6 @@ function Runner({
       setRunner((prev) => {
         if (prev.status !== "RUNNING") return prev;
 
-        // count down
         if (prev.remainingSec > 1) {
           const nextRem = prev.remainingSec - 1;
           return {
@@ -923,148 +1011,12 @@ function Runner({
             totalRemainingSec: computeRemainingTotal(phases, prev.phaseIndex, nextRem),
           };
         }
-function RepRunner({
-  card,
-  onBack,
-}: {
-  card: RepCard;
-  onBack: () => void;
-}) {
-  type Stage = "READY" | "SET" | "REST" | "DONE";
-  const [idx, setIdx] = useState(0);
-  const [stage, setStage] = useState<Stage>("READY");
-  const [running, setRunning] = useState(false);
-  const [t, setT] = useState(0);
 
-  useEffect(() => {
-    if (!running) return;
-    const id = window.setInterval(() => {
-      setT((prev) => {
-        if (stage === "REST") return Math.max(0, prev - 1);
-        return prev + 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [running, stage]);
-
-  const current = card.sets[idx];
-  const { totalReps, totalKg } = repTotals(card);
-
-  function startWorkout() {
-    setIdx(0);
-    setStage("SET");
-    setT(0);
-    setRunning(true);
-  }
-
-  function stopSet() {
-    setStage("REST");
-    setT(card.restBetweenSetsSec);
-    setRunning(true);
-  }
-
-  function goNextAfterRest() {
-    if (idx >= card.sets.length - 1) {
-      setRunning(false);
-      setStage("DONE");
-      return;
-    }
-    setIdx((i) => i + 1);
-    setStage("SET");
-    setT(0);
-    setRunning(true);
-  }
-
-  useEffect(() => {
-    if (stage === "REST" && running && t === 0) {
-      goNextAfterRest();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t, stage, running]);
-
-  const breakdown = repBreakdown(card);
-
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <button onClick={onBack}>← Zurück</button>
-
-      <div style={{ fontWeight: 800, fontSize: 18 }}>{card.title}</div>
-      <div style={{ fontSize: 13, opacity: 0.8 }}>
-        Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg bewegt
-      </div>
-
-      {stage === "READY" && <button onClick={startWorkout}>Start</button>}
-
-      {stage === "SET" && current && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontWeight: 700 }}>
-            Satz {idx + 1}/{card.sets.length}
-          </div>
-
-          <div style={{ marginTop: 6 }}>
-            <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg
-          </div>
-
-          <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>
-            {formatMMSS(t)}
-          </div>
-
-          {card.targetSetSec ? (
-            <div style={{ fontSize: 13, opacity: 0.8 }}>
-              Zielzeit: {formatMMSS(card.targetSetSec)}
-            </div>
-          ) : null}
-
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <button onClick={stopSet}>Stop (Satz fertig)</button>
-          </div>
-        </div>
-      )}
-
-      {stage === "REST" && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontWeight: 700 }}>Pause</div>
-
-          <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>
-            {formatMMSS(t)}
-          </div>
-
-          <button onClick={() => setT(0)} style={{ marginTop: 12 }}>
-            Skip
-          </button>
-        </div>
-      )}
-
-      {stage === "DONE" && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontWeight: 800 }}>Fertig ✅</div>
-          <div style={{ marginTop: 8 }}>
-            Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt
-          </div>
-
-          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-            {breakdown.map((b) => (
-              <div key={b.exercise}>
-                {b.exercise}: {b.reps} Wdh · {b.kg.toFixed(1)} kg
-              </div>
-            ))}
-          </div>
-
-          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={startWorkout}>Nochmal</button>
-            <button onClick={onBack}>Zurück</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-        
-        // move to next phase
         const nextIndex = prev.phaseIndex + 1;
         if (nextIndex >= phases.length) {
           return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0 };
         }
+
         const nextRem = phases[nextIndex].durationSec;
         return {
           ...prev,
@@ -1080,7 +1032,6 @@ function RepRunner({
 
   const phase = phases[runner.phaseIndex];
 
-  // Cues (beep/vibrate) on phase change
   const lastPhaseRef = useRef<number>(-1);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
@@ -1091,7 +1042,6 @@ function RepRunner({
     if (prefs.vibration && "vibrate" in navigator) navigator.vibrate([80, 40, 80]);
   }, [runner.phaseIndex, runner.status, prefs.sound, prefs.vibration]);
 
-  // Countdown beeps (last 3 seconds)
   const lastCountdownRef = useRef<number | null>(null);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
@@ -1218,6 +1168,146 @@ function RepRunner({
       {runner.status === "FINISHED" && (
         <div style={{ marginTop: 12, background: "#e8ffe8", padding: 10, borderRadius: 10 }}>
           ✅ Fertig!
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================
+   REPS Runner
+========================= */
+
+function RepRunner({
+  card,
+  onBack,
+}: {
+  card: RepCard;
+  onBack: () => void;
+}) {
+  type Stage = "READY" | "SET" | "REST" | "DONE";
+  const [idx, setIdx] = useState(0);
+  const [stage, setStage] = useState<Stage>("READY");
+  const [running, setRunning] = useState(false);
+  const [t, setT] = useState(0);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => {
+      setT((prev) => {
+        if (stage === "REST") return Math.max(0, prev - 1);
+        return prev + 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [running, stage]);
+
+  const current = card.sets[idx];
+  const { totalReps, totalKg } = repTotals(card);
+
+  function startWorkout() {
+    setIdx(0);
+    setStage("SET");
+    setT(0);
+    setRunning(true);
+  }
+
+  function stopSet() {
+    setStage("REST");
+    setT(card.restBetweenSetsSec);
+    setRunning(true);
+  }
+
+  function goNextAfterRest() {
+    if (idx >= card.sets.length - 1) {
+      setRunning(false);
+      setStage("DONE");
+      return;
+    }
+    setIdx((i) => i + 1);
+    setStage("SET");
+    setT(0);
+    setRunning(true);
+  }
+
+  useEffect(() => {
+    if (stage === "REST" && running && t === 0) {
+      goNextAfterRest();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t, stage, running]);
+
+  const breakdown = repBreakdown(card);
+
+  return (
+    <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
+      <button onClick={onBack}>← Zurück</button>
+
+      <div style={{ fontWeight: 800, fontSize: 18 }}>{card.title}</div>
+      <div style={{ fontSize: 13, opacity: 0.8 }}>
+        Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg bewegt
+      </div>
+
+      {stage === "READY" && <button onClick={startWorkout}>Start</button>}
+
+      {stage === "SET" && current && (
+        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 700 }}>
+            Satz {idx + 1}/{card.sets.length}
+          </div>
+
+          <div style={{ marginTop: 6 }}>
+            <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg
+          </div>
+
+          <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>
+            {formatMMSS(t)}
+          </div>
+
+          {card.targetSetSec ? (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>Zielzeit: {formatMMSS(card.targetSetSec)}</div>
+          ) : null}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <button onClick={stopSet}>Stop (Satz fertig)</button>
+          </div>
+        </div>
+      )}
+
+      {stage === "REST" && (
+        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 700 }}>Pause</div>
+
+          <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>
+            {formatMMSS(t)}
+          </div>
+
+          <button onClick={() => setT(0)} style={{ marginTop: 12 }}>
+            Skip
+          </button>
+        </div>
+      )}
+
+      {stage === "DONE" && (
+        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 800 }}>Fertig ✅</div>
+
+          <div style={{ marginTop: 8 }}>
+            Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt
+          </div>
+
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+            {breakdown.map((b) => (
+              <div key={b.exercise}>
+                {b.exercise}: {b.reps} Wdh · {b.kg.toFixed(1)} kg
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={startWorkout}>Nochmal</button>
+            <button onClick={onBack}>Zurück</button>
+          </div>
         </div>
       )}
     </div>

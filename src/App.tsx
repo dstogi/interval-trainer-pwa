@@ -350,7 +350,7 @@ export default function App() {
     setCards((prev) => [copy, ...prev]);
   }
 
-return (
+  return (
   <div className="app-shell">
     <div style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
       <h2 style={{ marginTop: 0 }}>Interval Trainer</h2>
@@ -423,7 +423,7 @@ return (
     </div>
   </div>
 );
-
+}
 function Editor({
   initial,
   onCancel,

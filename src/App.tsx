@@ -40,7 +40,7 @@ type RepSet = {
   id: string;
   exercise: string;
   reps: number;
-  weightKg: number; // Zusatzgewicht pro Wiederholung
+  weightKg: number; // Zusatzgewicht pro Wiederholung (Körpergewicht wird nicht mitgerechnet)
 };
 
 type RepCard = {
@@ -51,20 +51,54 @@ type RepCard = {
   updatedAt: number;
 
   sets: RepSet[];
-  restBetweenSetsSec: number;
-  targetSetSec?: number;
+  restBetweenSetsSec: number; // Pause nach jedem Satz
+  targetSetSec?: number; // optional Zielzeit pro Satz
 };
 
 type IntervalCard = TimeCard | RepCard;
+
+function isRepCard(card: IntervalCard): card is RepCard {
+  return card.kind === "REPS";
+}
+
+/* =========================
+   REPS helpers
+========================= */
+
+function repTotals(card: RepCard) {
+  const totalReps = card.sets.reduce((sum, s) => sum + (Number(s.reps) || 0), 0);
+  const totalKg = card.sets.reduce((sum, s) => sum + (Number(s.reps) || 0) * (Number(s.weightKg) || 0), 0);
+  return { totalReps, totalKg };
+}
+
+function repBreakdown(card: RepCard) {
+  const map = new Map<string, { reps: number; kg: number }>();
+  for (const s of card.sets) {
+    const key = (s.exercise || "—").trim() || "—";
+    const prev = map.get(key) ?? { reps: 0, kg: 0 };
+    prev.reps += Number(s.reps) || 0;
+    prev.kg += (Number(s.reps) || 0) * (Number(s.weightKg) || 0);
+    map.set(key, prev);
+  }
+  return Array.from(map.entries()).map(([exercise, v]) => ({ exercise, ...v }));
+}
+
+/* =========================
+   TIME phases
+========================= */
 
 type Phase = {
   type: PhaseType;
   label: string;
   restKind: RestKind;
   durationSec: number;
-  set: number;
-  rep: number;
+  set: number; // 1..sets, or 0 for warmup/cooldown
+  rep: number; // 1..reps, or 0 for warmup/cooldown
 };
+
+/* =========================
+   Preferences
+========================= */
 
 type Prefs = {
   sound: boolean;
@@ -72,13 +106,18 @@ type Prefs = {
   countdownBeeps: boolean;
 };
 
+/* =========================
+   Screens + Runner State
+========================= */
+
 type Screen =
   | { name: "HOME" }
   | { name: "EDIT"; id?: string; kind?: CardKind }
   | { name: "RUN"; id: string }
   | { name: "HISTORY" }
   | { name: "PROFILES" }
-  | { name: "RANKING" };
+  | { name: "RANKING" }
+  | { name: "IMPORT" };
 
 type RunnerState = {
   status: RunStatus;
@@ -110,7 +149,7 @@ type TimeLogData = {
 
 type RepLogData = {
   totalReps: number;
-  totalKg: number; // bewegte kg = Σ(Wdh × Zusatzgewicht)
+  totalKg: number; // Zusatzgewicht-bewegte kg
   setsCount: number;
   restBetweenSetsSec: number;
   targetSetSec?: number;
@@ -131,14 +170,6 @@ type WorkoutLogEntry = {
 };
 
 /* =========================
-   Share Payload (ohne Backend)
-========================= */
-
-type SharePayload =
-  | { v: 1; type: "CARD"; card: IntervalCard; fromProfileName?: string }
-  | { v: 1; type: "LOG"; entry: WorkoutLogEntry; profileName: string };
-
-/* =========================
    Storage Keys
 ========================= */
 
@@ -150,7 +181,7 @@ const ACTIVE_PROFILE_KEY = "interval_trainer_active_profile_v1";
 const HISTORY_KEY = "interval_trainer_history_v1";
 
 /* =========================
-   Small Helpers
+   Helpers
 ========================= */
 
 function makeId(): string {
@@ -223,49 +254,6 @@ function safeFilePart(s: string): string {
   );
 }
 
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    // Fallback
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand("copy");
-      ta.remove();
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
-
-async function shareLink(opts: { title: string; text: string; url: string }) {
-  // Mobile Share API
-  if ("share" in navigator) {
-    try {
-      // @ts-expect-error share exists in modern browsers
-      await navigator.share({ title: opts.title, text: opts.text, url: opts.url });
-      return;
-    } catch {
-      // user canceled -> fallback below
-    }
-  }
-
-  const ok = await copyToClipboard(opts.url);
-  if (ok) {
-    alert("Link wurde in die Zwischenablage kopiert ✅");
-  } else {
-    window.prompt("Link kopieren:", opts.url);
-  }
-}
-
 function downloadTextFile(filename: string, content: string, mime = "text/plain;charset=utf-8") {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -292,81 +280,40 @@ function toCSV(rows: any[][], delimiter = ";"): string {
   return rows.map((r) => r.map((c) => csvEscapeCell(c, delimiter)).join(delimiter)).join("\n");
 }
 
-/* =========================
-   Base64URL for Share Payload
-========================= */
-
-function base64UrlEncode(str: string): string {
-  const bytes = new TextEncoder().encode(str);
-  let bin = "";
-  bytes.forEach((b) => (bin += String.fromCharCode(b)));
-  const b64 = btoa(bin);
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function base64UrlDecode(b64url: string): string {
-  let b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
-  while (b64.length % 4) b64 += "=";
-  const bin = atob(b64);
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-function makeShareUrl(payload: SharePayload): string {
-  const json = JSON.stringify(payload);
-  const enc = base64UrlEncode(json);
-  return `${window.location.origin}${window.location.pathname}#share=${enc}`;
-}
-
-function decodeSharePayloadFromHash(): SharePayload | null {
-  const hash = window.location.hash || "";
-  if (!hash.startsWith("#share=")) return null;
-  const enc = hash.slice("#share=".length);
+async function tryCopyToClipboard(text: string): Promise<boolean> {
   try {
-    const json = base64UrlDecode(enc);
-    const parsed = JSON.parse(json);
-    if (!parsed || typeof parsed !== "object") return null;
-    if (parsed.v !== 1) return null;
-    if (parsed.type === "CARD" && parsed.card) return parsed as SharePayload;
-    if (parsed.type === "LOG" && parsed.entry && typeof parsed.profileName === "string") return parsed as SharePayload;
-    return null;
+    if (!("clipboard" in navigator)) return false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cb = (navigator as any).clipboard;
+    if (!cb || typeof cb.writeText !== "function") return false;
+    await cb.writeText(text);
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
-function clearHashWithoutReload() {
+async function shareText(title: string, text: string) {
+  // Web Share API (mobile)
   try {
-    history.replaceState(null, "", window.location.pathname + window.location.search);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nav: any = navigator as any;
+    if (nav && typeof nav.share === "function") {
+      await nav.share({ title, text });
+      return;
+    }
   } catch {
-    window.location.hash = "";
+    // ignore, fallback to clipboard
   }
-}
 
-/* =========================
-   Cards Helpers
-========================= */
-
-function isRepCard(card: IntervalCard): card is RepCard {
-  return (card as any).kind === "REPS";
-}
-
-function repTotals(card: RepCard) {
-  const totalReps = card.sets.reduce((sum, s) => sum + (s.reps || 0), 0);
-  const totalKg = card.sets.reduce((sum, s) => sum + (s.reps || 0) * (s.weightKg || 0), 0);
-  return { totalReps, totalKg };
-}
-
-function repBreakdown(card: RepCard) {
-  const map = new Map<string, { reps: number; kg: number }>();
-  for (const s of card.sets) {
-    const key = (s.exercise || "—").trim() || "—";
-    const prev = map.get(key) ?? { reps: 0, kg: 0 };
-    prev.reps += s.reps || 0;
-    prev.kg += (s.reps || 0) * (s.weightKg || 0);
-    map.set(key, prev);
+  const ok = await tryCopyToClipboard(text);
+  if (ok) {
+    window.alert("In die Zwischenablage kopiert ✅");
+    return;
   }
-  return Array.from(map.entries()).map(([exercise, v]) => ({ exercise, ...v }));
+
+  // Last resort
+  window.prompt("Kopieren:", text);
 }
 
 /* =========================
@@ -381,13 +328,27 @@ function buildPhases(card: TimeCard): Phase[] {
   const phases: Phase[] = [];
 
   if (t.warmupSec > 0) {
-    phases.push({ type: "WARMUP", label: "WARMUP", restKind: null, durationSec: t.warmupSec, set: 0, rep: 0 });
+    phases.push({
+      type: "WARMUP",
+      label: "WARMUP",
+      restKind: null,
+      durationSec: t.warmupSec,
+      set: 0,
+      rep: 0,
+    });
   }
 
   for (let s = 1; s <= sets; s++) {
     for (let r = 1; r <= reps; r++) {
       if (t.workSec > 0) {
-        phases.push({ type: "WORK", label: "ARBEIT", restKind: null, durationSec: t.workSec, set: s, rep: r });
+        phases.push({
+          type: "WORK",
+          label: "ARBEIT",
+          restKind: null,
+          durationSec: t.workSec,
+          set: s,
+          rep: r,
+        });
       }
 
       if (r < reps && t.restBetweenRepsSec > 0) {
@@ -415,11 +376,25 @@ function buildPhases(card: TimeCard): Phase[] {
   }
 
   if (t.cooldownSec > 0) {
-    phases.push({ type: "COOLDOWN", label: "COOLDOWN", restKind: null, durationSec: t.cooldownSec, set: 0, rep: 0 });
+    phases.push({
+      type: "COOLDOWN",
+      label: "COOLDOWN",
+      restKind: null,
+      durationSec: t.cooldownSec,
+      set: 0,
+      rep: 0,
+    });
   }
 
   if (phases.length === 0) {
-    phases.push({ type: "WORK", label: "ARBEIT", restKind: null, durationSec: 20, set: 1, rep: 1 });
+    phases.push({
+      type: "WORK",
+      label: "ARBEIT",
+      restKind: null,
+      durationSec: 20,
+      set: 1,
+      rep: 1,
+    });
   }
 
   return phases;
@@ -464,8 +439,8 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
     };
   }
 
-  // TIME (alte Karten können ohne "kind" kommen)
-  if (raw.timing && raw.exercise) {
+  // TIME (alte Karten konnten ohne "kind" sein)
+  if (raw.kind === "TIME" || (raw.timing && raw.exercise)) {
     const t = raw.timing ?? {};
     return {
       kind: "TIME",
@@ -481,9 +456,9 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
         warmupSec: Number(t.warmupSec) || 0,
         workSec: Number(t.workSec) || 20,
         restBetweenRepsSec: Number(t.restBetweenRepsSec) || 0,
-        repsPerSet: Number(t.repsPerSet) || 1,
+        repsPerSet: clampInt(Number(t.repsPerSet) || 1, 1, 99),
         restBetweenSetsSec: Number(t.restBetweenSetsSec) || 60,
-        sets: Number(t.sets) || 4,
+        sets: clampInt(Number(t.sets) || 4, 1, 99),
         cooldownSec: Number(t.cooldownSec) || 0,
       },
     };
@@ -579,13 +554,65 @@ function saveActiveProfileId(id: string) {
    History Storage
 ========================= */
 
+function normalizeLoadedEntry(raw: any): WorkoutLogEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const kind: WorkoutLogKind | null = raw.kind === "TIME" || raw.kind === "REPS" ? raw.kind : null;
+  if (!kind) return null;
+
+  const id = typeof raw.id === "string" ? raw.id : makeId();
+  const createdAt = typeof raw.createdAt === "number" ? raw.createdAt : Date.now();
+  const profileId = typeof raw.profileId === "string" ? raw.profileId : "";
+  const cardId = typeof raw.cardId === "string" ? raw.cardId : undefined;
+  const cardTitle = typeof raw.cardTitle === "string" ? raw.cardTitle : "Session";
+
+  if (!profileId) return null;
+
+  if (kind === "TIME") {
+    const t = raw.time && typeof raw.time === "object" ? raw.time : null;
+    const time: TimeLogData | undefined = t
+      ? {
+          exercise: typeof t.exercise === "string" ? t.exercise : "",
+          plannedTotalSec: Number(t.plannedTotalSec) || 0,
+          sets: Number(t.sets) || 0,
+          repsPerSet: Number(t.repsPerSet) || 0,
+          workSec: Number(t.workSec) || 0,
+          restBetweenSetsSec: Number(t.restBetweenSetsSec) || 0,
+        }
+      : undefined;
+
+    return { id, createdAt, profileId, kind, cardId, cardTitle, time };
+  }
+
+  const r = raw.reps && typeof raw.reps === "object" ? raw.reps : null;
+  const breakdownRaw = r && Array.isArray(r.breakdown) ? r.breakdown : [];
+  const breakdown = breakdownRaw.map((b: any) => ({
+    exercise: typeof b?.exercise === "string" ? b.exercise : "",
+    reps: Number(b?.reps) || 0,
+    kg: Number(b?.kg) || 0,
+  }));
+
+  const reps: RepLogData | undefined = r
+    ? {
+        totalReps: Number(r.totalReps) || 0,
+        totalKg: Number(r.totalKg) || 0,
+        setsCount: Number(r.setsCount) || 0,
+        restBetweenSetsSec: Number(r.restBetweenSetsSec) || 0,
+        targetSetSec: typeof r.targetSetSec === "number" ? r.targetSetSec : undefined,
+        breakdown,
+      }
+    : undefined;
+
+  return { id, createdAt, profileId, kind, cardId, cardTitle, reps };
+}
+
 function loadHistory(): WorkoutLogEntry[] {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed as WorkoutLogEntry[];
+    return parsed.map((x) => normalizeLoadedEntry(x)).filter((x): x is WorkoutLogEntry => Boolean(x));
   } catch {
     return [];
   }
@@ -663,7 +690,7 @@ function makeRandomRepCard(): RepCard {
   return {
     kind: "REPS",
     id: makeId(),
-    title: `Zufall – Wdh`,
+    title: "Zufall – Wdh",
     createdAt: now,
     updatedAt: now,
     sets,
@@ -747,6 +774,38 @@ function makeRepLogEntry(profileId: string, card: RepCard): WorkoutLogEntry {
 }
 
 /* =========================
+   Ranking Helpers
+========================= */
+
+type ProfileStats = {
+  profileId: string;
+  profileName: string;
+  sessions: number;
+  timePlannedSec: number;
+  totalReps: number;
+  totalKg: number;
+};
+
+function computeProfileStats(entries: WorkoutLogEntry[], profileId: string): Omit<ProfileStats, "profileName"> {
+  const filtered = entries.filter((e) => e.profileId === profileId);
+
+  let sessions = filtered.length;
+  let timePlannedSec = 0;
+  let totalReps = 0;
+  let totalKg = 0;
+
+  for (const e of filtered) {
+    if (e.kind === "TIME") timePlannedSec += e.time?.plannedTotalSec ?? 0;
+    if (e.kind === "REPS") {
+      totalReps += e.reps?.totalReps ?? 0;
+      totalKg += e.reps?.totalKg ?? 0;
+    }
+  }
+
+  return { profileId, sessions, timePlannedSec, totalReps, totalKg };
+}
+
+/* =========================
    App
 ========================= */
 
@@ -760,51 +819,16 @@ function initProfilesState(): { profiles: Profile[]; activeId: string } {
   return { profiles, activeId };
 }
 
-function cloneImportedCard(raw: IntervalCard): IntervalCard {
-  const now = Date.now();
-  if (isRepCard(raw)) {
-    return {
-      kind: "REPS",
-      id: makeId(),
-      title: raw.title,
-      createdAt: now,
-      updatedAt: now,
-      restBetweenSetsSec: Number(raw.restBetweenSetsSec) || 60,
-      targetSetSec: typeof raw.targetSetSec === "number" ? raw.targetSetSec : undefined,
-      sets: (Array.isArray(raw.sets) ? raw.sets : []).map((s) => ({
-        id: makeId(),
-        exercise: (s.exercise || "").toString(),
-        reps: Number(s.reps) || 0,
-        weightKg: Number(s.weightKg) || 0,
-      })),
-    };
-  }
-
-  return {
-    kind: "TIME",
-    id: makeId(),
-    title: raw.title,
-    createdAt: now,
-    updatedAt: now,
-    exercise: { name: raw.exercise?.name ?? "", notes: raw.exercise?.notes ?? "" },
-    timing: {
-      warmupSec: Number(raw.timing?.warmupSec) || 0,
-      workSec: Number(raw.timing?.workSec) || 20,
-      restBetweenRepsSec: Number(raw.timing?.restBetweenRepsSec) || 0,
-      repsPerSet: Number(raw.timing?.repsPerSet) || 1,
-      restBetweenSetsSec: Number(raw.timing?.restBetweenSetsSec) || 60,
-      sets: Number(raw.timing?.sets) || 4,
-      cooldownSec: Number(raw.timing?.cooldownSec) || 0,
-    },
-  };
-}
-
 export default function App() {
+  // profiles init in one go (damit kein doppeltes Default-Profil entsteht)
   const [profileInit] = useState(() => initProfilesState());
   const [profiles, setProfiles] = useState<Profile[]>(profileInit.profiles);
   const [activeProfileId, setActiveProfileId] = useState<string>(profileInit.activeId);
 
-  const activeProfile = useMemo(() => profiles.find((p) => p.id === activeProfileId) ?? null, [profiles, activeProfileId]);
+  const activeProfile = useMemo(
+    () => profiles.find((p) => p.id === activeProfileId) ?? null,
+    [profiles, activeProfileId]
+  );
 
   const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs());
 
@@ -825,18 +849,6 @@ export default function App() {
 
   function profileName(id: string) {
     return profiles.find((p) => p.id === id)?.name ?? "Unbekannt";
-  }
-
-  function ensureProfileByName(name: string): string {
-    const wanted = (name || "Unbekannt").trim();
-    if (!wanted) return activeProfileId;
-
-    const existing = profiles.find((p) => p.name.trim().toLowerCase() === wanted.toLowerCase());
-    if (existing) return existing.id;
-
-    const p: Profile = { id: makeId(), name: wanted, createdAt: Date.now() };
-    setProfiles((prev) => [p, ...prev]);
-    return p.id;
   }
 
   const activeCard = useMemo(() => {
@@ -920,86 +932,121 @@ export default function App() {
   }
 
   function removeProfile(id: string) {
-    setProfiles((prev) => {
-      if (prev.length <= 1) return prev;
-      const next = prev.filter((p) => p.id !== id);
-      if (activeProfileId === id) setActiveProfileId(next[0]?.id ?? prev[0].id);
-      return next;
-    });
+    if (profiles.length <= 1) return;
+    const remaining = profiles.filter((p) => p.id !== id);
+    setProfiles(remaining);
+
+    if (activeProfileId === id) {
+      setActiveProfileId(remaining[0]?.id ?? "");
+    }
   }
 
-  async function shareChallenge(card: IntervalCard) {
-    const payload: SharePayload = {
-      v: 1,
-      type: "CARD",
+  async function shareCard(card: IntervalCard) {
+    const payload = {
+      app: "interval-trainer",
+      type: "card",
+      version: 1,
+      exportedAt: new Date().toISOString(),
       card,
-      fromProfileName: activeProfile?.name ?? "Unbekannt",
     };
-
-    const url = makeShareUrl(payload);
-
-    await shareLink({
-      title: "Interval Trainer – Challenge",
-      text: `Challenge von ${activeProfile?.name ?? "Unbekannt"}: ${card.title}`,
-      url,
-    });
+    const text = JSON.stringify(payload, null, 2);
+    await shareText(`Session teilen: ${card.title}`, text);
   }
 
-  // Import aus #share=... beim App-Start
-  useEffect(() => {
-    const payload = decodeSharePayloadFromHash();
-    if (!payload) return;
+  async function shareHistoryEntry(entry: WorkoutLogEntry) {
+    const payload = {
+      app: "interval-trainer",
+      type: "result",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      profileName: profileName(entry.profileId),
+      entry,
+    };
+    const text = JSON.stringify(payload, null, 2);
+    await shareText(`Ergebnis teilen: ${entry.cardTitle}`, text);
+  }
 
-    // Hash sofort entfernen, sonst importiert man beim Reload erneut
-    clearHashWithoutReload();
-
-    if (payload.type === "CARD") {
-      const from = payload.fromProfileName ? ` von ${payload.fromProfileName}` : "";
-      const ok = window.confirm(`Challenge${from} importieren?\n\n"${payload.card.title}"`);
-      if (!ok) return;
-
-      const imported = cloneImportedCard(payload.card);
-      setCards((prev) => [imported, ...prev]);
-      alert("Challenge importiert ✅");
-      setScreen({ name: "HOME" });
-      return;
+  function importFromText(text: string): { ok: boolean; message: string } {
+    let obj: any;
+    try {
+      obj = JSON.parse(text);
+    } catch {
+      return { ok: false, message: "JSON ist ungültig." };
     }
 
-    if (payload.type === "LOG") {
-      const ok = window.confirm(`Ergebnis importieren?\n\nProfil: ${payload.profileName}\nSession: ${payload.entry.cardTitle}`);
-      if (!ok) return;
-
-      const pid = ensureProfileByName(payload.profileName);
-
-      const incoming = payload.entry;
-      const imported: WorkoutLogEntry = {
-        ...incoming,
-        id: makeId(),
-        profileId: pid,
-        createdAt: typeof incoming.createdAt === "number" ? incoming.createdAt : Date.now(),
-      };
-
-      setHistory((prev) => {
-        const dup = prev.some(
-          (e) =>
-            e.profileId === imported.profileId &&
-            e.kind === imported.kind &&
-            e.createdAt === imported.createdAt &&
-            e.cardTitle === imported.cardTitle
-        );
-        if (dup) return prev;
-        return [imported, ...prev];
-      });
-
-      alert("Ergebnis importiert ✅");
-      setScreen({ name: "HISTORY" });
-      return;
+    // Wrapper: {type:"card", card:{...}}
+    if (obj && typeof obj === "object" && obj.type === "card" && obj.card) {
+      const card = normalizeLoadedCard(obj.card);
+      if (!card) return { ok: false, message: "Card-JSON nicht erkannt." };
+      return importCard(card);
     }
-  }, [activeProfile?.name, activeProfileId, profiles]); // profiles nötig für ensureProfileByName
+
+    // Wrapper: {type:"result", entry:{...}, profileName:"..."}
+    if (obj && typeof obj === "object" && obj.type === "result" && obj.entry) {
+      return importResult(obj.entry, typeof obj.profileName === "string" ? obj.profileName : "Freund");
+    }
+
+    // Direct card
+    const maybeCard = normalizeLoadedCard(obj);
+    if (maybeCard) return importCard(maybeCard);
+
+    // Direct result
+    if (obj && typeof obj === "object" && (obj.kind === "TIME" || obj.kind === "REPS") && obj.cardTitle) {
+      return importResult(obj, typeof obj.profileName === "string" ? obj.profileName : "Freund");
+    }
+
+    return { ok: false, message: "Unbekanntes Format. Nutze 'Teilen' im App-Menü." };
+  }
+
+  function importCard(card: IntervalCard): { ok: boolean; message: string } {
+    // avoid overwriting existing cards
+    let next = card;
+
+    if (cards.some((c) => c.id === card.id)) {
+      const now = Date.now();
+      if (isRepCard(card)) {
+        next = {
+          ...card,
+          id: makeId(),
+          title: card.title + " (Import)",
+          createdAt: now,
+          updatedAt: now,
+          sets: card.sets.map((s) => ({ ...s, id: makeId() })),
+        };
+      } else {
+        next = {
+          ...card,
+          id: makeId(),
+          title: card.title + " (Import)",
+          createdAt: now,
+          updatedAt: now,
+        };
+      }
+    }
+
+    upsertCard(next);
+    return { ok: true, message: `Card importiert: ${next.title}` };
+  }
+
+  function importResult(rawEntry: any, wantedProfileName: string): { ok: boolean; message: string } {
+    const temp = normalizeLoadedEntry({ ...(rawEntry ?? {}), profileId: "tmp" });
+    if (!temp) return { ok: false, message: "Ergebnis-JSON nicht erkannt." };
+
+    const name = (wantedProfileName || "Freund").trim() || "Freund";
+    const existing = profiles.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;
+
+    const profile = existing ?? { id: makeId(), name, createdAt: Date.now() };
+    if (!existing) setProfiles((prev) => [profile, ...prev]);
+
+    const entry: WorkoutLogEntry = { ...temp, id: makeId(), profileId: profile.id };
+    setHistory((prev) => [entry, ...prev]);
+
+    return { ok: true, message: `Ergebnis importiert für Profil: ${profile.name}` };
+  }
 
   return (
     <div className="app-shell">
-      <div style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: 16 }}>
         <h2 style={{ marginTop: 0 }}>Interval Trainer</h2>
 
         {/* HOME */}
@@ -1018,8 +1065,9 @@ export default function App() {
               </label>
 
               <button onClick={() => setScreen({ name: "HISTORY" })}>Verlauf</button>
-              <button onClick={() => setScreen({ name: "RANKING" })}>Ranking</button>
               <button onClick={() => setScreen({ name: "PROFILES" })}>Profile</button>
+              <button onClick={() => setScreen({ name: "RANKING" })}>Ranking</button>
+              <button onClick={() => setScreen({ name: "IMPORT" })}>Import</button>
             </div>
 
             <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1043,9 +1091,9 @@ export default function App() {
 
                   return (
                     <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-                      <div style={{ fontWeight: 700 }}>{card.title}</div>
+                      <div style={{ fontWeight: 800 }}>{card.title}</div>
 
-                      <div style={{ fontSize: 13, marginTop: 6 }}>
+                      <div style={{ fontSize: 13, marginTop: 6, opacity: 0.9 }}>
                         {card.sets.length} Sätze · {totalReps} Wdh gesamt · {totalKg.toFixed(1)} kg bewegt (Zusatzgewicht)
                         {" · "}Pause {formatMMSS(card.restBetweenSetsSec)}
                         {card.targetSetSec ? ` · Zielzeit/Satz ${formatMMSS(card.targetSetSec)}` : ""}
@@ -1055,8 +1103,8 @@ export default function App() {
                         <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
                         <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
                         <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
+                        <button onClick={() => shareCard(card)}>Teilen</button>
                         <button onClick={() => deleteCard(card.id)}>Löschen</button>
-                        <button onClick={() => shareChallenge(card)}>Challenge teilen</button>
                       </div>
                     </div>
                   );
@@ -1067,10 +1115,10 @@ export default function App() {
 
                 return (
                   <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-                    <div style={{ fontWeight: 700 }}>{card.title}</div>
+                    <div style={{ fontWeight: 800 }}>{card.title}</div>
                     <div style={{ fontSize: 14, opacity: 0.8 }}>Übung: {card.exercise.name || "—"}</div>
 
-                    <div style={{ fontSize: 13, marginTop: 6 }}>
+                    <div style={{ fontSize: 13, marginTop: 6, opacity: 0.9 }}>
                       {card.timing.sets} Sätze · {card.timing.repsPerSet} Wdh/Satz · Arbeit {formatMMSS(card.timing.workSec)}
                       {" · "}Satzpause {formatMMSS(card.timing.restBetweenSetsSec)}
                       {" · "}Gesamt {formatMMSS(total)}
@@ -1080,8 +1128,8 @@ export default function App() {
                       <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
                       <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
                       <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
+                      <button onClick={() => shareCard(card)}>Teilen</button>
                       <button onClick={() => deleteCard(card.id)}>Löschen</button>
-                      <button onClick={() => shareChallenge(card)}>Challenge teilen</button>
                     </div>
                   </div>
                 );
@@ -1090,8 +1138,6 @@ export default function App() {
 
             <div style={{ marginTop: 18, fontSize: 12, opacity: 0.7 }}>
               Tipp fürs iPhone: Safari → Share → <b>Zum Home‑Bildschirm</b>.
-              <br />
-              Tipp für Wettbewerb: „Challenge teilen“ → Link an Freunde schicken → Ergebnisse importieren → Ranking vergleichen.
             </div>
           </>
         )}
@@ -1120,6 +1166,7 @@ export default function App() {
             onBack={() => setScreen({ name: "HOME" })}
             onDeleteEntry={deleteHistoryEntry}
             onClearActiveProfile={clearHistoryForActiveProfile}
+            onShareEntry={shareHistoryEntry}
             cards={cards}
             prefs={prefs}
           />
@@ -1127,18 +1174,29 @@ export default function App() {
 
         {/* RANKING */}
         {screen.name === "RANKING" && (
-          <RankingView
-            entries={history}
-            profiles={profiles}
+          <RankingView entries={history} profiles={profiles} onBack={() => setScreen({ name: "HOME" })} />
+        )}
+
+        {/* IMPORT */}
+        {screen.name === "IMPORT" && (
+          <ImportView
             onBack={() => setScreen({ name: "HOME" })}
+            onImport={(raw) => {
+              const res = importFromText(raw);
+              if (!res.ok) {
+                window.alert(res.message);
+                return;
+              }
+              window.alert(res.message);
+              setScreen({ name: "HOME" });
+            }}
           />
         )}
 
         {/* EDIT */}
         {screen.name === "EDIT" &&
           (() => {
-            const editKind: CardKind =
-              activeCard ? (isRepCard(activeCard) ? "REPS" : "TIME") : screen.kind ?? "TIME";
+            const editKind: CardKind = activeCard ? (isRepCard(activeCard) ? "REPS" : "TIME") : screen.kind ?? "TIME";
 
             if (editKind === "REPS") {
               const initial = activeCard && isRepCard(activeCard) ? activeCard : null;
@@ -1234,9 +1292,18 @@ function Editor({
       cooldownSec: parseTimeToSec(cooldown),
     };
 
-    if (!title.trim()) return setError("Bitte einen Titel eingeben.");
-    if (!exercise.trim()) return setError("Bitte eine Übung eingeben (z.B. Liegestütze).");
-    if (timing.workSec <= 0) return setError("Arbeitszeit muss > 0 sein.");
+    if (!title.trim()) {
+      setError("Bitte einen Titel eingeben.");
+      return;
+    }
+    if (!exercise.trim()) {
+      setError("Bitte eine Übung eingeben (z.B. Liegestütze).");
+      return;
+    }
+    if (timing.workSec <= 0) {
+      setError("Arbeitszeit muss > 0 sein.");
+      return;
+    }
 
     const now = Date.now();
     const saved: TimeCard = {
@@ -1424,7 +1491,7 @@ function RepEditor({
               step={0.5}
               value={s.weightKg}
               onChange={(e) => updateSet(s.id, { weightKg: Number(e.target.value) })}
-              style={{ width: 130 }}
+              style={{ width: 140 }}
               title="Zusatzgewicht (kg)"
             />
 
@@ -1433,7 +1500,7 @@ function RepEditor({
         ))}
       </div>
 
-      <div style={{ fontSize: 13, opacity: 0.8 }}>
+      <div style={{ fontSize: 13, opacity: 0.85 }}>
         Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
       </div>
 
@@ -1462,6 +1529,10 @@ function RepEditor({
         >
           Speichern
         </button>
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.7 }}>
+        Hinweis: „kg bewegt“ = Σ(Wdh × Zusatzgewicht). Körpergewicht ist nicht enthalten.
       </div>
     </div>
   );
@@ -1528,9 +1599,8 @@ function Runner({
     totalRemainingSec: total,
   }));
 
-  const [savedEntry, setSavedEntry] = useState<WorkoutLogEntry | null>(null);
-
-  useEffect(() => setSavedEntry(null), [card.id, profileId]);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setSaved(false), [card.id, profileId]);
 
   useEffect(() => {
     setRunner({
@@ -1550,7 +1620,11 @@ function Runner({
 
         if (prev.remainingSec > 1) {
           const nextRem = prev.remainingSec - 1;
-          return { ...prev, remainingSec: nextRem, totalRemainingSec: computeRemainingTotal(phases, prev.phaseIndex, nextRem) };
+          return {
+            ...prev,
+            remainingSec: nextRem,
+            totalRemainingSec: computeRemainingTotal(phases, prev.phaseIndex, nextRem),
+          };
         }
 
         const nextIndex = prev.phaseIndex + 1;
@@ -1559,7 +1633,12 @@ function Runner({
         }
 
         const nextRem = phases[nextIndex].durationSec;
-        return { ...prev, phaseIndex: nextIndex, remainingSec: nextRem, totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem) };
+        return {
+          ...prev,
+          phaseIndex: nextIndex,
+          remainingSec: nextRem,
+          totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem),
+        };
       });
     }, 1000);
 
@@ -1598,7 +1677,12 @@ function Runner({
       if (prev.status === "IDLE" || prev.status === "FINISHED") {
         const idx = 0;
         const rem = phases[0]?.durationSec ?? 0;
-        return { status: "RUNNING", phaseIndex: idx, remainingSec: rem, totalRemainingSec: computeRemainingTotal(phases, idx, rem) };
+        return {
+          status: "RUNNING",
+          phaseIndex: idx,
+          remainingSec: rem,
+          totalRemainingSec: computeRemainingTotal(phases, idx, rem),
+        };
       }
       if (prev.status === "RUNNING") return { ...prev, status: "PAUSED" };
       if (prev.status === "PAUSED") return { ...prev, status: "RUNNING" };
@@ -1611,43 +1695,41 @@ function Runner({
       const nextIndex = prev.phaseIndex + 1;
       if (nextIndex >= phases.length) return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0 };
       const nextRem = phases[nextIndex].durationSec;
-      return { ...prev, status: "RUNNING", phaseIndex: nextIndex, remainingSec: nextRem, totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem) };
+      return {
+        ...prev,
+        status: "RUNNING",
+        phaseIndex: nextIndex,
+        remainingSec: nextRem,
+        totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem),
+      };
     });
   }
 
   function stop() {
-    setRunner({ status: "IDLE", phaseIndex: 0, remainingSec: phases[0]?.durationSec ?? 0, totalRemainingSec: total });
+    setRunner({
+      status: "IDLE",
+      phaseIndex: 0,
+      remainingSec: phases[0]?.durationSec ?? 0,
+      totalRemainingSec: total,
+    });
   }
 
   function saveToHistory() {
-    if (savedEntry) return;
+    if (saved) return;
+    if (!profileId) return;
     const entry = makeTimeLogEntry(profileId, card, total);
     onSaveLog(entry);
-    setSavedEntry(entry);
-  }
-
-  async function shareResult() {
-    const entry = savedEntry ?? makeTimeLogEntry(profileId, card, total);
-    if (!savedEntry) {
-      onSaveLog(entry);
-      setSavedEntry(entry);
-    }
-
-    const payload: SharePayload = { v: 1, type: "LOG", entry, profileName };
-    const url = makeShareUrl(payload);
-
-    await shareLink({
-      title: "Interval Trainer – Ergebnis",
-      text: `${profileName}: ${card.title} (${formatMMSS(total)})`,
-      url,
-    });
+    setSaved(true);
   }
 
   return (
     <div style={{ marginTop: 16 }}>
-      <div style={{ fontSize: 12, opacity: 0.7 }}>
+      <button onClick={onBack}>← Zurück</button>
+
+      <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
         Profil: <b>{profileName}</b>
       </div>
+
       <h3 style={{ marginTop: 6 }}>{card.title}</h3>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
@@ -1679,7 +1761,6 @@ function Runner({
             Skip
           </button>
           <button onClick={stop}>Stop</button>
-          <button onClick={onBack}>Zurück</button>
         </div>
       </div>
 
@@ -1690,7 +1771,11 @@ function Runner({
         </label>
 
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={prefs.vibration} onChange={(e) => onPrefsChange({ ...prefs, vibration: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={prefs.vibration}
+            onChange={(e) => onPrefsChange({ ...prefs, vibration: e.target.checked })}
+          />
           Vibration (Android)
         </label>
 
@@ -1707,13 +1792,12 @@ function Runner({
       {runner.status === "FINISHED" && (
         <div style={{ marginTop: 12, background: "#e8ffe8", padding: 10, borderRadius: 10 }}>
           ✅ Fertig!
-          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {!savedEntry ? (
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {!saved ? (
               <button onClick={saveToHistory}>In Verlauf speichern</button>
             ) : (
               <span style={{ fontWeight: 700 }}>Gespeichert ✅</span>
             )}
-            <button onClick={shareResult}>Ergebnis teilen</button>
           </div>
         </div>
       )}
@@ -1740,27 +1824,31 @@ function RepRunner({
   onSaveLog: (entry: WorkoutLogEntry) => void;
 }) {
   type Stage = "READY" | "SET" | "REST" | "DONE";
+
   const [idx, setIdx] = useState(0);
   const [stage, setStage] = useState<Stage>("READY");
   const [running, setRunning] = useState(false);
   const [t, setT] = useState(0);
 
-  const [savedEntry, setSavedEntry] = useState<WorkoutLogEntry | null>(null);
-  useEffect(() => setSavedEntry(null), [card.id, profileId]);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setSaved(false), [card.id, profileId]);
 
   useEffect(() => {
     if (!running) return;
+
     const id = window.setInterval(() => {
       setT((prev) => {
         if (stage === "REST") return Math.max(0, prev - 1);
         return prev + 1;
       });
     }, 1000);
+
     return () => window.clearInterval(id);
   }, [running, stage]);
 
   const current = card.sets[idx];
   const { totalReps, totalKg } = repTotals(card);
+  const breakdown = repBreakdown(card);
 
   function startWorkout() {
     setIdx(0);
@@ -1794,30 +1882,12 @@ function RepRunner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, stage, running]);
 
-  const breakdown = repBreakdown(card);
-
   function saveToHistory() {
-    if (savedEntry) return;
+    if (saved) return;
+    if (!profileId) return;
     const entry = makeRepLogEntry(profileId, card);
     onSaveLog(entry);
-    setSavedEntry(entry);
-  }
-
-  async function shareResult() {
-    const entry = savedEntry ?? makeRepLogEntry(profileId, card);
-    if (!savedEntry) {
-      onSaveLog(entry);
-      setSavedEntry(entry);
-    }
-
-    const payload: SharePayload = { v: 1, type: "LOG", entry, profileName };
-    const url = makeShareUrl(payload);
-
-    await shareLink({
-      title: "Interval Trainer – Ergebnis",
-      text: `${profileName}: ${card.title} (${totalReps} Wdh, ${totalKg.toFixed(1)} kg)`,
-      url,
-    });
+    setSaved(true);
   }
 
   return (
@@ -1827,9 +1897,10 @@ function RepRunner({
       <div style={{ fontSize: 12, opacity: 0.7 }}>
         Profil: <b>{profileName}</b>
       </div>
+
       <div style={{ fontWeight: 800, fontSize: 18 }}>{card.title}</div>
 
-      <div style={{ fontSize: 13, opacity: 0.8 }}>
+      <div style={{ fontSize: 13, opacity: 0.85 }}>
         Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg bewegt (Zusatzgewicht)
       </div>
 
@@ -1847,7 +1918,9 @@ function RepRunner({
 
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
 
-          {card.targetSetSec ? <div style={{ fontSize: 13, opacity: 0.8 }}>Zielzeit: {formatMMSS(card.targetSetSec)}</div> : null}
+          {card.targetSetSec ? (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>Zielzeit: {formatMMSS(card.targetSetSec)}</div>
+          ) : null}
 
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button onClick={stopSet}>Stop (Satz fertig)</button>
@@ -1883,15 +1956,13 @@ function RepRunner({
             ))}
           </div>
 
-          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {!savedEntry ? (
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {!saved ? (
               <button onClick={saveToHistory}>In Verlauf speichern</button>
             ) : (
               <span style={{ fontWeight: 700 }}>Gespeichert ✅</span>
             )}
-            <button onClick={shareResult}>Ergebnis teilen</button>
             <button onClick={startWorkout}>Nochmal</button>
-            <button onClick={onBack}>Zurück</button>
           </div>
         </div>
       )}
@@ -1954,7 +2025,11 @@ function ProfilesView({
             <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Erstellt: {formatDateTime(p.createdAt)}</div>
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {p.id !== activeProfileId ? <button onClick={() => onSetActive(p.id)}>Aktiv setzen</button> : <button disabled>Aktiv</button>}
+              {p.id !== activeProfileId ? (
+                <button onClick={() => onSetActive(p.id)}>Aktiv setzen</button>
+              ) : (
+                <button disabled>Aktiv</button>
+              )}
 
               <button
                 onClick={() => {
@@ -1981,7 +2056,7 @@ function ProfilesView({
       </div>
 
       <div style={{ fontSize: 12, opacity: 0.7 }}>
-        Hinweis: Profile sind „Person oder Gruppe“. Du kannst Freunde als Profile anlegen und deren Ergebnisse per Link importieren.
+        Hinweis: Profile sind „Person oder Gruppe“. Der Verlauf wird pro Profil gespeichert.
       </div>
     </div>
   );
@@ -2000,6 +2075,7 @@ function HistoryView({
   onBack,
   onDeleteEntry,
   onClearActiveProfile,
+  onShareEntry,
   cards,
   prefs,
 }: {
@@ -2011,6 +2087,7 @@ function HistoryView({
   onBack: () => void;
   onDeleteEntry: (id: string) => void;
   onClearActiveProfile: () => void;
+  onShareEntry: (entry: WorkoutLogEntry) => void;
   cards: IntervalCard[];
   prefs: Prefs;
 }) {
@@ -2033,7 +2110,13 @@ function HistoryView({
 
     const bestKg = filtered.reduce((max, e) => Math.max(max, e.kind === "REPS" ? e.reps?.totalKg ?? 0 : 0), 0);
 
-    return { count7: last7.length, timeSec, repsTotal, kgTotal, bestKg };
+    return {
+      count7: last7.length,
+      timeSec,
+      repsTotal,
+      kgTotal,
+      bestKg,
+    };
   }, [filtered]);
 
   type ExercisePR = {
@@ -2042,7 +2125,7 @@ function HistoryView({
     bestKgAt: number;
     bestReps: number;
     bestRepsAt: number;
-    bestAvgKg: number;
+    bestAvgKg: number; // kg pro Wdh (Ø)
     bestAvgKgAt: number;
   };
 
@@ -2051,26 +2134,25 @@ function HistoryView({
 
     for (const e of filtered) {
       if (e.kind !== "REPS") continue;
+
       const br = e.reps?.breakdown;
       if (!Array.isArray(br)) continue;
 
       for (const b of br) {
         const ex = (b.exercise || "—").trim() || "—";
-        const kg = Number((b as any).kg) || 0;
-        const reps = Number((b as any).reps) || 0;
+        const kg = Number(b.kg) || 0;
+        const reps = Number(b.reps) || 0;
         const avg = reps > 0 ? kg / reps : 0;
 
-        const pr =
-          map.get(ex) ??
-          ({
-            exercise: ex,
-            bestKg: 0,
-            bestKgAt: 0,
-            bestReps: 0,
-            bestRepsAt: 0,
-            bestAvgKg: 0,
-            bestAvgKgAt: 0,
-          } as ExercisePR);
+        const pr = map.get(ex) ?? {
+          exercise: ex,
+          bestKg: 0,
+          bestKgAt: 0,
+          bestReps: 0,
+          bestRepsAt: 0,
+          bestAvgKg: 0,
+          bestAvgKgAt: 0,
+        };
 
         if (kg > pr.bestKg) {
           pr.bestKg = kg;
@@ -2098,6 +2180,7 @@ function HistoryView({
     const stamp = new Date().toISOString().slice(0, 10);
     const backup = {
       app: "interval-trainer",
+      type: "backup",
       version: 1,
       exportedAt: new Date().toISOString(),
       profiles,
@@ -2107,7 +2190,11 @@ function HistoryView({
       history: entries,
     };
 
-    downloadTextFile(`interval-trainer-backup-${stamp}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
+    downloadTextFile(
+      `interval-trainer-backup-${stamp}.json`,
+      JSON.stringify(backup, null, 2),
+      "application/json;charset=utf-8"
+    );
   }
 
   function exportHistoryCSV() {
@@ -2209,7 +2296,7 @@ function HistoryView({
       const profName = profileName(e.profileId);
 
       for (const b of br) {
-        rows.push([iso, local, profName, e.cardTitle, (b.exercise || "").trim(), b.reps ?? 0, typeof b.kg === "number" ? b.kg.toFixed(1) : b.kg ?? 0]);
+        rows.push([iso, local, profName, e.cardTitle, (b.exercise || "").trim(), Number(b.reps) || 0, (Number(b.kg) || 0).toFixed(1)]);
       }
     }
 
@@ -2274,9 +2361,11 @@ function HistoryView({
               <div key={pr.exercise} style={{ borderTop: "1px dashed #ddd", paddingTop: 8 }}>
                 <div style={{ fontWeight: 800 }}>{pr.exercise}</div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>
-                  Best kg bewegt: <b>{pr.bestKg.toFixed(1)}</b> kg {pr.bestKgAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestKgAt)})</span> : null}
+                  Best kg bewegt: <b>{pr.bestKg.toFixed(1)}</b> kg{" "}
+                  {pr.bestKgAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestKgAt)})</span> : null}
                   <br />
-                  Best Wdh: <b>{pr.bestReps}</b> {pr.bestRepsAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestRepsAt)})</span> : null}
+                  Best Wdh: <b>{pr.bestReps}</b>{" "}
+                  {pr.bestRepsAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestRepsAt)})</span> : null}
                   <br />
                   Best Ø Zusatzgewicht: <b>{pr.bestAvgKg.toFixed(1)}</b> kg/Wdh{" "}
                   {pr.bestAvgKgAt ? <span style={{ opacity: 0.7 }}>({formatDateTime(pr.bestAvgKgAt)})</span> : null}
@@ -2311,7 +2400,8 @@ function HistoryView({
 
               {e.kind === "REPS" && e.reps ? (
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-                  {e.reps.setsCount} Sätze · <b>{e.reps.totalReps}</b> Wdh · <b>{e.reps.totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
+                  {e.reps.setsCount} Sätze · <b>{e.reps.totalReps}</b> Wdh · <b>{e.reps.totalKg.toFixed(1)}</b> kg bewegt
+                  (Zusatzgewicht)
                 </div>
               ) : null}
 
@@ -2324,6 +2414,8 @@ function HistoryView({
                 >
                   Löschen
                 </button>
+
+                <button onClick={() => onShareEntry(e)}>Teilen</button>
               </div>
             </div>
           ))}
@@ -2338,7 +2430,7 @@ function HistoryView({
 }
 
 /* =========================
-   Ranking View (Wettbewerb)
+   Ranking View
 ========================= */
 
 function RankingView({
@@ -2350,142 +2442,118 @@ function RankingView({
   profiles: Profile[];
   onBack: () => void;
 }) {
-  type RangeKey = "7D" | "30D" | "ALL";
-  const [range, setRange] = useState<RangeKey>("7D");
+  const [mode, setMode] = useState<"7D" | "ALL">("7D");
 
-  const fromTs = useMemo(() => {
-    const now = Date.now();
-    if (range === "7D") return now - 7 * 24 * 60 * 60 * 1000;
-    if (range === "30D") return now - 30 * 24 * 60 * 60 * 1000;
-    return 0;
-  }, [range]);
-
-  const filtered = useMemo(() => {
-    if (range === "ALL") return entries;
-    return entries.filter((e) => e.createdAt >= fromTs);
-  }, [entries, range, fromTs]);
-
-  type Row = {
-    profileId: string;
-    name: string;
-    sessions: number;
-    timeSec: number;
-    totalReps: number;
-    totalKg: number;
-  };
+  const filteredEntries = useMemo(() => {
+    if (mode === "ALL") return entries;
+    const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return entries.filter((e) => e.createdAt >= from);
+  }, [entries, mode]);
 
   const rows = useMemo(() => {
-    const map = new Map<string, Row>();
-
-    for (const p of profiles) {
-      map.set(p.id, { profileId: p.id, name: p.name, sessions: 0, timeSec: 0, totalReps: 0, totalKg: 0 });
-    }
-
-    for (const e of filtered) {
-      const r = map.get(e.profileId);
-      if (!r) continue;
-
-      r.sessions += 1;
-
-      if (e.kind === "TIME" && e.time) {
-        r.timeSec += e.time.plannedTotalSec ?? 0;
-      }
-      if (e.kind === "REPS" && e.reps) {
-        r.totalReps += e.reps.totalReps ?? 0;
-        r.totalKg += e.reps.totalKg ?? 0;
-      }
-    }
-
-    return Array.from(map.values());
-  }, [filtered, profiles]);
-
-  const topKg = useMemo(() => rows.slice().sort((a, b) => b.totalKg - a.totalKg || b.sessions - a.sessions), [rows]);
-  const topReps = useMemo(() => rows.slice().sort((a, b) => b.totalReps - a.totalReps || b.sessions - a.sessions), [rows]);
-  const topTime = useMemo(() => rows.slice().sort((a, b) => b.timeSec - a.timeSec || b.sessions - a.sessions), [rows]);
-  const topSessions = useMemo(() => rows.slice().sort((a, b) => b.sessions - a.sessions || b.totalKg - a.totalKg), [rows]);
-
-  async function nudgeText(msg: string) {
-    await shareLink({
-      title: "Interval Trainer – Push",
-      text: msg,
-      url: `${window.location.origin}${window.location.pathname}`,
+    const list: ProfileStats[] = profiles.map((p) => {
+      const s = computeProfileStats(filteredEntries, p.id);
+      return { ...s, profileName: p.name };
     });
-  }
 
-  function rangeLabel() {
-    if (range === "7D") return "7 Tage";
-    if (range === "30D") return "30 Tage";
-    return "All‑Time";
-  }
+    // Rank by kg moved (then reps, then time, then sessions)
+    return list.sort(
+      (a, b) => b.totalKg - a.totalKg || b.totalReps - a.totalReps || b.timePlannedSec - a.timePlannedSec || b.sessions - a.sessions
+    );
+  }, [filteredEntries, profiles]);
 
   return (
     <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
       <button onClick={onBack}>← Zurück</button>
 
-      <h3 style={{ marginTop: 0 }}>Ranking</h3>
+      <h3 style={{ marginTop: 0 }}>Ranking (lokal)</h3>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 13, opacity: 0.8 }}>Zeitraum:</span>
-        <select value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
-          <option value="7D">7 Tage</option>
-          <option value="30D">30 Tage</option>
-          <option value="ALL">All‑Time</option>
-        </select>
-
-        <button
-          onClick={() =>
-            nudgeText(`🏁 Ranking (${rangeLabel()}): Wer ist diese Woche #1? 😄\nÖffne die App und teile eine Challenge!`)
-          }
-        >
-          Push senden
+        <button onClick={() => setMode("7D")} disabled={mode === "7D"}>
+          Letzte 7 Tage
+        </button>
+        <button onClick={() => setMode("ALL")} disabled={mode === "ALL"}>
+          All‑Time
         </button>
       </div>
 
-      <Leaderboard
-        title={`🏋️ kg bewegt (Zusatzgewicht) – ${rangeLabel()}`}
-        rows={topKg}
-        value={(r) => `${r.totalKg.toFixed(1)} kg`}
-      />
-      <Leaderboard title={`🔢 Wiederholungen – ${rangeLabel()}`} rows={topReps} value={(r) => `${r.totalReps} Wdh`} />
-      <Leaderboard title={`⏱️ Zeit (geplant) – ${rangeLabel()}`} rows={topTime} value={(r) => `${formatMMSS(r.timeSec)}`} />
-      <Leaderboard title={`✅ Sessions – ${rangeLabel()}`} rows={topSessions} value={(r) => `${r.sessions}`} />
+      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+        <div style={{ fontSize: 13, opacity: 0.85 }}>
+          Sortierung: <b>kg bewegt</b> (REPS) → Wdh → Zeit geplant → Sessions.
+        </div>
+
+        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+          {rows.map((r, idx) => (
+            <div key={r.profileId} style={{ borderTop: idx === 0 ? "none" : "1px dashed #ddd", paddingTop: idx === 0 ? 0 : 8 }}>
+              <div style={{ fontWeight: 800 }}>
+                #{idx + 1} {r.profileName}
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.85 }}>
+                Sessions: <b>{r.sessions}</b>
+                {" · "}kg bewegt: <b>{r.totalKg.toFixed(1)}</b>
+                {" · "}Wdh: <b>{r.totalReps}</b>
+                {" · "}Zeit geplant: <b>{formatMMSS(r.timePlannedSec)}</b>
+              </div>
+            </div>
+          ))}
+
+          {rows.length === 0 ? <div style={{ fontSize: 13, opacity: 0.8 }}>Noch keine Daten.</div> : null}
+        </div>
+      </div>
 
       <div style={{ fontSize: 12, opacity: 0.7 }}>
-        Tipp: Importiere Ergebnisse von Freunden über „Ergebnis teilen“ → Link öffnen → Import bestätigen. Danach erscheinen sie im Ranking.
+        Ohne Backend: Du kannst Ergebnisse per <b>„Teilen“</b> im Verlauf exportieren und beim anderen Gerät über <b>Import</b> einfügen.
       </div>
     </div>
   );
 }
 
-function Leaderboard({
-  title,
-  rows,
-  value,
+/* =========================
+   Import View
+========================= */
+
+function ImportView({
+  onBack,
+  onImport,
 }: {
-  title: string;
-  rows: { profileId: string; name: string }[];
-  value: (r: any) => string;
+  onBack: () => void;
+  onImport: (rawText: string) => void;
 }) {
-  const top = rows.slice(0, 10);
+  const [text, setText] = useState("");
 
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-      <div style={{ fontWeight: 800 }}>{title}</div>
+    <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+      <button onClick={onBack}>← Zurück</button>
 
-      {top.length === 0 ? (
-        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>Noch keine Daten.</div>
-      ) : (
-        <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-          {top.map((r, i) => (
-            <div key={r.profileId} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <div style={{ fontWeight: 700 }}>
-                {i + 1}. {r.name}
-              </div>
-              <div style={{ fontVariantNumeric: "tabular-nums" }}>{value(r)}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <h3 style={{ marginTop: 0 }}>Import</h3>
+
+      <div style={{ fontSize: 13, opacity: 0.85 }}>
+        Hier kannst du JSON einfügen, das du über <b>Teilen</b> aus einer Karte oder einem Verlaufseintrag kopiert hast.
+      </div>
+
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder='JSON hier einfügen…'
+        rows={10}
+        style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+      />
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          onClick={() => {
+            onImport(text);
+            setText("");
+          }}
+        >
+          Importieren
+        </button>
+        <button onClick={() => setText("")}>Leeren</button>
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.7 }}>
+        Tipp: Auf iPhone/Android geht das am besten über <b>Teilen → In Zwischenablage kopieren</b>.
+      </div>
     </div>
   );
 }

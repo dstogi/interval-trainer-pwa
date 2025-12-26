@@ -41,7 +41,7 @@ type RepSet = {
   id: string;
   exercise: string;
   reps: number;
-  weightKg: number; // Zusatzgewicht pro Wiederholung (A)
+  weightKg: number; // Zusatzgewicht pro Wiederholung
 };
 
 type RepCard = {
@@ -64,7 +64,7 @@ function isRepCard(card: IntervalCard): card is RepCard {
 
 function repTotals(card: RepCard) {
   const totalReps = card.sets.reduce((sum, s) => sum + (s.reps || 0), 0);
-  // A: Zusatzgewicht => bewegte kg = reps * Zusatzgewicht
+  // Zusatzgewicht => bewegte kg = reps * Zusatzgewicht
   const totalKg = card.sets.reduce((sum, s) => sum + (s.reps || 0) * (s.weightKg || 0), 0);
   return { totalReps, totalKg };
 }
@@ -221,14 +221,21 @@ function formatDateTime(ts: number): string {
   } catch {
     return String(ts);
   }
+}
+
+/* =========================
+   Export / CSV Helpers  ✅ (wichtig: global, NICHT in formatDateTime!)
+========================= */
 
 function safeFilePart(s: string): string {
-  return (s || "data")
-    .toString()
-    .trim()
-    .replace(/[\s]+/g, "_")
-    .replace(/[^\w\-]+/g, "")
-    .slice(0, 40) || "data";
+  return (
+    (s || "data")
+      .toString()
+      .trim()
+      .replace(/[\s]+/g, "_")
+      .replace(/[^\w\-]+/g, "")
+      .slice(0, 40) || "data"
+  );
 }
 
 function downloadTextFile(filename: string, content: string, mime = "text/plain;charset=utf-8") {
@@ -255,7 +262,6 @@ function csvEscapeCell(value: any, delimiter = ";"): string {
 
 function toCSV(rows: any[][], delimiter = ";"): string {
   return rows.map((r) => r.map((c) => csvEscapeCell(c, delimiter)).join(delimiter)).join("\n");
-}
 }
 
 /* =========================
@@ -466,9 +472,9 @@ function loadProfiles(): Profile[] {
     return parsed
       .filter((p) => p && typeof p === "object")
       .map((p) => ({
-        id: typeof p.id === "string" ? p.id : makeId(),
-        name: typeof p.name === "string" ? p.name : "Profil",
-        createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
+        id: typeof (p as any).id === "string" ? (p as any).id : makeId(),
+        name: typeof (p as any).name === "string" ? (p as any).name : "Profil",
+        createdAt: typeof (p as any).createdAt === "number" ? (p as any).createdAt : Date.now(),
       })) as Profile[];
   } catch {
     return [];
@@ -679,7 +685,6 @@ function initProfilesState(): { profiles: Profile[]; activeId: string } {
 }
 
 export default function App() {
-  // profiles init in one go (damit kein doppeltes Default-Profil entsteht)
   const [profileInit] = useState(() => initProfilesState());
   const [profiles, setProfiles] = useState<Profile[]>(profileInit.profiles);
   const [activeProfileId, setActiveProfileId] = useState<string>(profileInit.activeId);
@@ -792,11 +797,13 @@ export default function App() {
 
   function removeProfile(id: string) {
     if (profiles.length <= 1) return;
-    setProfiles((prev) => prev.filter((p) => p.id !== id));
+
+    // Wichtig: neues Remaining aus dem aktuellen State ableiten
+    const remaining = profiles.filter((p) => p.id !== id);
+    setProfiles(remaining);
 
     if (activeProfileId === id) {
-      const remaining = profiles.filter((p) => p.id !== id);
-      setActiveProfileId(remaining[0]?.id ?? "");
+      setActiveProfileId(remaining[0]?.id ?? profiles[0].id);
     }
   }
 
@@ -863,6 +870,7 @@ export default function App() {
                   );
                 }
 
+                // TIME Card
                 const phases = buildPhases(card);
                 const total = totalSessionSec(phases);
 
@@ -908,20 +916,20 @@ export default function App() {
         )}
 
         {/* HISTORY */}
-{screen.name === "HISTORY" && (
-  <HistoryView
-    entries={history}
-    profiles={profiles}
-    activeProfileId={activeProfileId}
-    onChangeActiveProfile={setActiveProfileId}
-    profileName={profileName}
-    onBack={() => setScreen({ name: "HOME" })}
-    onDeleteEntry={deleteHistoryEntry}
-    onClearActiveProfile={clearHistoryForActiveProfile}
-    cards={cards}
-    prefs={prefs}
-  />
-)}
+        {screen.name === "HISTORY" && (
+          <HistoryView
+            entries={history}
+            profiles={profiles}
+            activeProfileId={activeProfileId}
+            onChangeActiveProfile={setActiveProfileId}
+            profileName={profileName}
+            onBack={() => setScreen({ name: "HOME" })}
+            onDeleteEntry={deleteHistoryEntry}
+            onClearActiveProfile={clearHistoryForActiveProfile}
+            cards={cards}
+            prefs={prefs}
+          />
+        )}
 
         {/* EDIT */}
         {screen.name === "EDIT" &&
@@ -1451,7 +1459,9 @@ function Runner({
 
   return (
     <div style={{ marginTop: 16 }}>
-      <div style={{ fontSize: 12, opacity: 0.7 }}>Profil: <b>{profileName}</b></div>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>
+        Profil: <b>{profileName}</b>
+      </div>
       <h3 style={{ marginTop: 6 }}>{card.title}</h3>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
@@ -1619,7 +1629,9 @@ function RepRunner({
     <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
       <button onClick={onBack}>← Zurück</button>
 
-      <div style={{ fontSize: 12, opacity: 0.7 }}>Profil: <b>{profileName}</b></div>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>
+        Profil: <b>{profileName}</b>
+      </div>
       <div style={{ fontWeight: 800, fontSize: 18 }}>{card.title}</div>
 
       <div style={{ fontSize: 13, opacity: 0.8 }}>
@@ -1977,13 +1989,7 @@ function HistoryView({
       } else if (e.kind === "REPS" && e.reps) {
         const r = e.reps;
         const names = Array.isArray(r.breakdown)
-          ? Array.from(
-              new Set(
-                r.breakdown
-                  .map((x) => (x.exercise || "").trim())
-                  .filter(Boolean)
-              )
-            )
+          ? Array.from(new Set(r.breakdown.map((x) => (x.exercise || "").trim()).filter(Boolean)))
           : [];
         const exerciseField = names.length === 1 ? names[0] : names.length > 1 ? "Multi" : "";
 
@@ -2005,12 +2011,10 @@ function HistoryView({
           typeof r.totalKg === "number" ? r.totalKg.toFixed(1) : "",
         ]);
       } else {
-        // Fallback falls ein Eintrag unvollständig ist
         rows.push([iso, local, profName, e.kind, e.cardTitle, "", "", "", "", "", "", "", "", "", ""]);
       }
     }
 
-   
     const csv = toCSV(rows, ";");
     downloadTextFile(`interval-trainer-history-${prof}-${stamp}.csv`, csv, "text/csv;charset=utf-8");
   }
@@ -2170,4 +2174,3 @@ function HistoryView({
     </div>
   );
 }
-

@@ -21,14 +21,70 @@ type Exercise = {
   notes: string;
 };
 
-type IntervalCard = {
+type CardKind = "TIME" | "REPS";
+
+type TimeCard = {
+  // optional, damit alte gespeicherte Cards (ohne kind) weiterhin funktionieren:
+  kind?: "TIME";
   id: string;
   title: string;
-  exercise: Exercise;
-  timing: TimingConfig;
   createdAt: number;
   updatedAt: number;
+  exercise: { name: string; notes: string };
+  timing: {
+    warmupSec: number;
+    workSec: number;
+    restBetweenRepsSec: number;
+    repsPerSet: number;
+    restBetweenSetsSec: number;
+    sets: number;
+    cooldownSec: number;
+  };
 };
+
+type RepSet = {
+  id: string;
+  exercise: string;
+  reps: number;
+  weightKg: number;
+};
+
+type RepCard = {
+  kind: "REPS";
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+
+  sets: RepSet[];
+  restBetweenSetsSec: number; // Pause nach jedem Satz
+  targetSetSec?: number;      // optional Zielzeit pro Satz
+};
+
+type IntervalCard = TimeCard | RepCard;
+
+// ---- Helper für Type Narrowing + Summen
+function isRepCard(card: IntervalCard): card is RepCard {
+  return (card as any).kind === "REPS";
+}
+
+function repTotals(card: RepCard) {
+  const totalReps = card.sets.reduce((sum, s) => sum + (s.reps || 0), 0);
+  const totalKg = card.sets.reduce((sum, s) => sum + (s.reps || 0) * (s.weightKg || 0), 0);
+  return { totalReps, totalKg };
+}
+
+function repBreakdown(card: RepCard) {
+  const map = new Map<string, { reps: number; kg: number }>();
+  for (const s of card.sets) {
+    const key = (s.exercise || "—").trim() || "—";
+    const prev = map.get(key) ?? { reps: 0, kg: 0 };
+    prev.reps += s.reps || 0;
+    prev.kg += (s.reps || 0) * (s.weightKg || 0);
+    map.set(key, prev);
+  }
+  return Array.from(map.entries()).map(([exercise, v]) => ({ exercise, ...v }));
+}
 
 type Phase = {
   type: PhaseType;
@@ -261,9 +317,35 @@ function makeRandomCard(): IntervalCard {
   };
 }
 
+function makeRandomRepCard(): RepCard {
+  const now = Date.now();
+  const pool = ["Liegestütze", "Kniebeuge", "Dips", "Klimmzüge", "Rudern"];
+  const base = pool[Math.floor(Math.random() * pool.length)];
+  const sameExercise = Math.random() < 0.6;
+  const setsCount = 4;
+
+  const sets: RepSet[] = Array.from({ length: setsCount }, () => {
+    const exercise = sameExercise ? base : pool[Math.floor(Math.random() * pool.length)];
+    const reps = 6 + Math.floor(Math.random() * 10); // 6..15
+    const weightKg = Math.random() < 0.5 ? 0 : 2.5 * (1 + Math.floor(Math.random() * 8)); // 2.5..20
+    return { id: makeId(), exercise, reps, weightKg };
+  });
+
+  return {
+    kind: "REPS",
+    id: makeId(),
+    title: `Zufall – Wdh`,
+    createdAt: now,
+    updatedAt: now,
+    sets,
+    restBetweenSetsSec: 60,
+    targetSetSec: 60,
+  };
+}
+
 type Screen =
   | { name: "HOME" }
-  | { name: "EDIT"; id?: string }
+  | { name: "EDIT"; id?: string; kind?: CardKind }
   | { name: "RUN"; id: string };
 
 type RunnerState = {
@@ -336,19 +418,35 @@ export default function App() {
     setCards((prev) => prev.filter((c) => c.id !== id));
   }
 
-  function duplicateCard(id: string) {
-    const original = cards.find((c) => c.id === id);
-    if (!original) return;
-    const now = Date.now();
-    const copy: IntervalCard = {
+function duplicateCard(id: string) {
+  const original = cards.find((c) => c.id === id);
+  if (!original) return;
+
+  const now = Date.now();
+
+  if (isRepCard(original)) {
+    const copy: RepCard = {
       ...original,
       id: makeId(),
       title: original.title + " (Kopie)",
       createdAt: now,
       updatedAt: now,
+      sets: original.sets.map((s) => ({ ...s, id: makeId() })),
     };
     setCards((prev) => [copy, ...prev]);
+    return;
   }
+
+  const copy: TimeCard = {
+    ...original,
+    id: makeId(),
+    title: original.title + " (Kopie)",
+    createdAt: now,
+    updatedAt: now,
+    kind: "TIME",
+  };
+  setCards((prev) => [copy, ...prev]);
+}
 
   return (
   <div className="app-shell">
@@ -358,41 +456,69 @@ export default function App() {
       {screen.name === "HOME" && (
         <>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={() => setScreen({ name: "EDIT" })}>+ Neue Karte</button>
-            <button
-              onClick={() => {
-                const c = makeRandomCard();
-                upsertCard(c);
-              }}
-            >
-              🎲 Zufalls‑Session
-            </button>
+<button onClick={() => setScreen({ name: "EDIT", kind: "TIME" })}>+ Zeit‑Karte</button>
+<button onClick={() => setScreen({ name: "EDIT", kind: "REPS" })}>+ Wdh‑Karte</button>
+
+<button
+  onClick={() => {
+    const c = Math.random() < 0.5 ? makeRandomCard() : makeRandomRepCard();
+    upsertCard(c);
+  }}
+>
+  🎲 Zufalls‑Session
+</button>
           </div>
 
           <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-            {cards.map((card) => {
-              const phases = buildPhases(card);
-              const total = totalSessionSec(phases);
-              return (
-                <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-                  <div style={{ fontWeight: 700 }}>{card.title}</div>
-                  <div style={{ fontSize: 14, opacity: 0.8 }}>Übung: {card.exercise.name || "—"}</div>
+{cards.map((card) => {
+  // --- REPS Card ---
+  if (isRepCard(card)) {
+    const { totalReps, totalKg } = repTotals(card);
 
-                  <div style={{ fontSize: 13, marginTop: 6 }}>
-                    {card.timing.sets} Sätze · {card.timing.repsPerSet} Wdh/Satz · Arbeit {formatMMSS(card.timing.workSec)}
-                    {" · "}Satzpause {formatMMSS(card.timing.restBetweenSetsSec)}
-                    {" · "}Gesamt {formatMMSS(total)}
-                  </div>
+    return (
+      <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+        <div style={{ fontWeight: 700 }}>{card.title}</div>
 
-                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                    <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
-                    <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
-                    <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
-                    <button onClick={() => deleteCard(card.id)}>Löschen</button>
-                  </div>
-                </div>
-              );
-            })}
+        <div style={{ fontSize: 13, marginTop: 6 }}>
+          {card.sets.length} Sätze · {totalReps} Wdh gesamt · {totalKg.toFixed(1)} kg bewegt
+          {" · "}Pause {formatMMSS(card.restBetweenSetsSec)}
+          {card.targetSetSec ? ` · Zielzeit/Satz ${formatMMSS(card.targetSetSec)}` : ""}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
+          <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
+          <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
+          <button onClick={() => deleteCard(card.id)}>Löschen</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- TIME Card (wie bisher) ---
+  const phases = buildPhases(card);
+  const total = totalSessionSec(phases);
+
+  return (
+    <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+      <div style={{ fontWeight: 700 }}>{card.title}</div>
+      <div style={{ fontSize: 14, opacity: 0.8 }}>Übung: {card.exercise.name || "—"}</div>
+
+      <div style={{ fontSize: 13, marginTop: 6 }}>
+        {card.timing.sets} Sätze · {card.timing.repsPerSet} Wdh/Satz · Arbeit {formatMMSS(card.timing.workSec)}
+        {" · "}Satzpause {formatMMSS(card.timing.restBetweenSetsSec)}
+        {" · "}Gesamt {formatMMSS(total)}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
+        <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
+        <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
+        <button onClick={() => deleteCard(card.id)}>Löschen</button>
+      </div>
+    </div>
+  );
+})}
           </div>
 
           <div style={{ marginTop: 18, fontSize: 12, opacity: 0.7 }}>
@@ -401,25 +527,54 @@ export default function App() {
         </>
       )}
 
-      {screen.name === "EDIT" && (
-        <Editor
-          initial={activeCard}
-          onCancel={() => setScreen({ name: "HOME" })}
-          onSave={(saved) => {
-            upsertCard(saved);
-            setScreen({ name: "HOME" });
-          }}
-        />
-      )}
+{screen.name === "EDIT" && (() => {
+  const editKind: CardKind =
+    activeCard ? (isRepCard(activeCard) ? "REPS" : "TIME") : (screen.kind ?? "TIME");
 
-      {screen.name === "RUN" && activeCard && (
-        <Runner
-          card={activeCard}
-          prefs={prefs}
-          onPrefsChange={setPrefs}
-          onBack={() => setScreen({ name: "HOME" })}
-        />
-      )}
+  if (editKind === "REPS") {
+    const initial = activeCard && isRepCard(activeCard) ? activeCard : null;
+    return (
+      <RepEditor
+        initial={initial}
+        onCancel={() => setScreen({ name: "HOME" })}
+        onSave={(saved) => {
+          upsertCard(saved);
+          setScreen({ name: "HOME" });
+        }}
+      />
+    );
+  }
+
+  const initial = activeCard && !isRepCard(activeCard) ? activeCard : null;
+  return (
+    <Editor
+      initial={initial}
+      onCancel={() => setScreen({ name: "HOME" })}
+      onSave={(saved) => {
+        upsertCard(saved);
+        setScreen({ name: "HOME" });
+      }}
+    />
+  );
+})()}
+
+
+{screen.name === "RUN" && activeCard && (
+  isRepCard(activeCard) ? (
+    <RepRunner
+      card={activeCard}
+      onBack={() => setScreen({ name: "HOME" })}
+    />
+  ) : (
+    <Runner
+      card={activeCard}
+      prefs={prefs}
+      onPrefsChange={setPrefs}
+      onBack={() => setScreen({ name: "HOME" })}
+    />
+  )
+)}
+
     </div>
   </div>
 );
@@ -464,6 +619,164 @@ function Editor({
       setError("Bitte einen Titel eingeben.");
       return;
     }
+    function RepEditor({
+  initial,
+  onCancel,
+  onSave,
+}: {
+  initial: RepCard | null;
+  onCancel: () => void;
+  onSave: (card: RepCard) => void;
+}) {
+  const [title, setTitle] = useState(initial?.title ?? "Wdh‑Session");
+  const [restSet, setRestSet] = useState(formatMMSS(initial?.restBetweenSetsSec ?? 60));
+  const [targetSet, setTargetSet] = useState(formatMMSS(initial?.targetSetSec ?? 0));
+
+  const [sets, setSets] = useState<RepSet[]>(
+    initial?.sets ?? [
+      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
+      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
+      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
+      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
+    ]
+  );
+
+  function resizeSets(n: number) {
+    const nextN = Math.max(1, Math.min(50, n || 1));
+    setSets((prev) => {
+      if (prev.length === nextN) return prev;
+      if (prev.length > nextN) return prev.slice(0, nextN);
+
+      const last = prev[prev.length - 1] ?? { id: makeId(), exercise: "", reps: 10, weightKg: 0 };
+      const extra = Array.from({ length: nextN - prev.length }, () => ({
+        ...last,
+        id: makeId(),
+      }));
+      return [...prev, ...extra];
+    });
+  }
+
+  function updateSet(id: string, patch: Partial<RepSet>) {
+    setSets((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }
+
+  function removeSet(id: string) {
+    setSets((prev) => (prev.length <= 1 ? prev : prev.filter((s) => s.id !== id)));
+  }
+
+  const previewCard: RepCard = {
+    kind: "REPS",
+    id: initial?.id ?? "preview",
+    title,
+    createdAt: initial?.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+    sets,
+    restBetweenSetsSec: parseMMSS(restSet) ?? 60,
+    targetSetSec: (parseMMSS(targetSet) ?? 0) || undefined,
+  };
+
+  const { totalReps, totalKg } = repTotals(previewCard);
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <label>
+        Titel
+        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <label>
+          Pause (mm:ss)
+          <input value={restSet} onChange={(e) => setRestSet(e.target.value)} />
+        </label>
+
+        <label>
+          Zielzeit/Satz (optional mm:ss)
+          <input value={targetSet} onChange={(e) => setTargetSet(e.target.value)} />
+        </label>
+
+        <label>
+          Anzahl Sätze
+          <input
+            type="number"
+            min={1}
+            value={sets.length}
+            onChange={(e) => resizeSets(Number(e.target.value))}
+            style={{ width: 90 }}
+          />
+        </label>
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        {sets.map((s, i) => (
+          <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ width: 22, opacity: 0.7 }}>{i + 1}.</div>
+
+            <input
+              value={s.exercise}
+              onChange={(e) => updateSet(s.id, { exercise: e.target.value })}
+              placeholder="Übung"
+              style={{ flex: "1 1 160px" }}
+            />
+
+            <input
+              type="number"
+              min={0}
+              value={s.reps}
+              onChange={(e) => updateSet(s.id, { reps: Number(e.target.value) })}
+              style={{ width: 90 }}
+              title="Wdh"
+            />
+
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={s.weightKg}
+              onChange={(e) => updateSet(s.id, { weightKg: Number(e.target.value) })}
+              style={{ width: 110 }}
+              title="kg"
+            />
+
+            <button onClick={() => removeSet(s.id)}>✕</button>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 13, opacity: 0.8 }}>
+        Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button onClick={onCancel}>Abbrechen</button>
+        <button
+          onClick={() => {
+            const now = Date.now();
+            const saved: RepCard = {
+              kind: "REPS",
+              id: initial?.id ?? makeId(),
+              title: title.trim() || "Wdh‑Session",
+              createdAt: initial?.createdAt ?? now,
+              updatedAt: now,
+              sets: sets.map((s) => ({
+                ...s,
+                exercise: (s.exercise || "").trim(),
+                reps: Math.max(0, Number(s.reps) || 0),
+                weightKg: Math.max(0, Number(s.weightKg) || 0),
+              })),
+              restBetweenSetsSec: parseMMSS(restSet) ?? 60,
+              targetSetSec: (parseMMSS(targetSet) ?? 0) || undefined,
+            };
+            onSave(saved);
+          }}
+        >
+          Speichern
+        </button>
+      </div>
+    </div>
+  );
+}
+
     if (!exercise.trim()) {
       setError("Bitte eine Übung eingeben (z.B. Liegestütze).");
       return;
@@ -610,7 +923,143 @@ function Runner({
             totalRemainingSec: computeRemainingTotal(phases, prev.phaseIndex, nextRem),
           };
         }
+function RepRunner({
+  card,
+  onBack,
+}: {
+  card: RepCard;
+  onBack: () => void;
+}) {
+  type Stage = "READY" | "SET" | "REST" | "DONE";
+  const [idx, setIdx] = useState(0);
+  const [stage, setStage] = useState<Stage>("READY");
+  const [running, setRunning] = useState(false);
+  const [t, setT] = useState(0);
 
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => {
+      setT((prev) => {
+        if (stage === "REST") return Math.max(0, prev - 1);
+        return prev + 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [running, stage]);
+
+  const current = card.sets[idx];
+  const { totalReps, totalKg } = repTotals(card);
+
+  function startWorkout() {
+    setIdx(0);
+    setStage("SET");
+    setT(0);
+    setRunning(true);
+  }
+
+  function stopSet() {
+    setStage("REST");
+    setT(card.restBetweenSetsSec);
+    setRunning(true);
+  }
+
+  function goNextAfterRest() {
+    if (idx >= card.sets.length - 1) {
+      setRunning(false);
+      setStage("DONE");
+      return;
+    }
+    setIdx((i) => i + 1);
+    setStage("SET");
+    setT(0);
+    setRunning(true);
+  }
+
+  useEffect(() => {
+    if (stage === "REST" && running && t === 0) {
+      goNextAfterRest();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t, stage, running]);
+
+  const breakdown = repBreakdown(card);
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <button onClick={onBack}>← Zurück</button>
+
+      <div style={{ fontWeight: 800, fontSize: 18 }}>{card.title}</div>
+      <div style={{ fontSize: 13, opacity: 0.8 }}>
+        Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg bewegt
+      </div>
+
+      {stage === "READY" && <button onClick={startWorkout}>Start</button>}
+
+      {stage === "SET" && current && (
+        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 700 }}>
+            Satz {idx + 1}/{card.sets.length}
+          </div>
+
+          <div style={{ marginTop: 6 }}>
+            <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg
+          </div>
+
+          <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>
+            {formatMMSS(t)}
+          </div>
+
+          {card.targetSetSec ? (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>
+              Zielzeit: {formatMMSS(card.targetSetSec)}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <button onClick={stopSet}>Stop (Satz fertig)</button>
+          </div>
+        </div>
+      )}
+
+      {stage === "REST" && (
+        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 700 }}>Pause</div>
+
+          <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>
+            {formatMMSS(t)}
+          </div>
+
+          <button onClick={() => setT(0)} style={{ marginTop: 12 }}>
+            Skip
+          </button>
+        </div>
+      )}
+
+      {stage === "DONE" && (
+        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 800 }}>Fertig ✅</div>
+          <div style={{ marginTop: 8 }}>
+            Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt
+          </div>
+
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+            {breakdown.map((b) => (
+              <div key={b.exercise}>
+                {b.exercise}: {b.reps} Wdh · {b.kg.toFixed(1)} kg
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={startWorkout}>Nochmal</button>
+            <button onClick={onBack}>Zurück</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+        
         // move to next phase
         const nextIndex = prev.phaseIndex + 1;
         if (nextIndex >= phases.length) {

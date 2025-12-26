@@ -245,29 +245,6 @@ function downloadTextFile(filename: string, content: string, mime = "text/plain;
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-   function safeFilePart(s: string): string {
-  return (s || "data")
-    .toString()
-    .trim()
-    .replace(/[\s]+/g, "_")
-    .replace(/[^\w\-]+/g, "")
-    .slice(0, 40) || "data";
-}
-
-function downloadTextFile(filename: string, content: string, mime = "text/plain;charset=utf-8") {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-   
 function csvEscapeCell(value: any, delimiter = ";"): string {
   if (value === null || value === undefined) return "";
   const s = String(value);

@@ -4,17 +4,19 @@
     <meta charset="UTF-8" />
 
     <!-- Favicons -->
-    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
 
     <!-- iOS Home Screen Icon -->
-    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <!-- (Optional, aber typisch für PWA) Manifest
+         Wenn du vite-plugin-pwa nutzt, kann das auch automatisch injiziert werden -->
+    <!-- <link rel="manifest" href="/manifest.webmanifest" /> -->
 
     <!-- iOS PWA -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Interval" />
-
-    <!-- wichtig: sorgt für “schönere” Statusbar (weiße Schrift) -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <!-- Theme -->
@@ -30,45 +32,48 @@
       :root { --brand:#6C63FF; --appbg:#F6F6FF; }
       html, body { height: 100%; }
       body { margin: 0; background: var(--brand); }
-    </style>
-    .boot-splash{
-  min-height:100vh;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  background:var(--brand);
-  color:#fff;
-  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-}
-.boot-icon{
-  width:120px; height:120px;
-  border-radius:28px;
-  box-shadow:0 10px 30px rgba(0,0,0,.25);
-}
-.boot-title{
-  margin-top:16px;
-  font-size:20px;
-  font-weight:700;
-}
-.boot-sub{
-  margin-top:6px;
-  font-size:13px;
-  opacity:.75;
-}
 
+      .boot-splash{
+        min-height:100vh;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        background:var(--brand);
+        color:#fff;
+        font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+
+        /* Optional: etwas “notch-sicherer”, weil du viewport-fit=cover nutzt */
+        padding: env(safe-area-inset-top) env(safe-area-inset-right)
+                 env(safe-area-inset-bottom) env(safe-area-inset-left);
+      }
+      .boot-icon{
+        width:120px; height:120px;
+        border-radius:28px;
+        box-shadow:0 10px 30px rgba(0,0,0,.25);
+      }
+      .boot-title{
+        margin-top:16px;
+        font-size:20px;
+        font-weight:700;
+      }
+      .boot-sub{
+        margin-top:6px;
+        font-size:13px;
+        opacity:.75;
+      }
+    </style>
   </head>
 
   <body>
-  <div id="root">
-    <div class="boot-splash" role="status" aria-label="Lädt">
-      <img class="boot-icon" src="pwa-192.png" alt="" />
-      <div class="boot-title">Interval Trainer</div>
-      <div class="boot-sub">Loading…</div>
+    <div id="root">
+      <div class="boot-splash" role="status" aria-label="Lädt">
+        <img class="boot-icon" src="/pwa-192.png" alt="" />
+        <div class="boot-title">Interval Trainer</div>
+        <div class="boot-sub">Loading…</div>
+      </div>
     </div>
-  </div>
 
-  <script type="module" src="/src/main.tsx"></script>
-</body>
-
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

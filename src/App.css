@@ -16,8 +16,11 @@ body {
   width: 100%;
 }
 
-.appShell {
+.app-shell{
   min-height: 100vh;
+  background: #F6F6FF;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .topbar {

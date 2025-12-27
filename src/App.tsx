@@ -192,6 +192,25 @@ function makeId(): string {
   }
 }
 
+type FocusTone = "work" | "rest" | "warmup" | "cooldown" | "paused" | "done";
+
+function toneToBg(tone: FocusTone): string {
+  switch (tone) {
+    case "work":
+      return "#0a7a4a";
+    case "rest":
+      return "#202124";
+    case "warmup":
+      return "#0b3a6d";
+    case "cooldown":
+      return "#0b3a6d";
+    case "paused":
+      return "#3a3a3a";
+    case "done":
+      return "#135d2e";
+  }
+}
+
 function clampInt(n: number, min: number, max: number): number {
   const x = Number.isFinite(n) ? Math.trunc(n) : min;
   return Math.min(max, Math.max(min, x));
@@ -1601,11 +1620,11 @@ function Runner({
 
   const [saved, setSaved] = useState(false);
   useEffect(() => setSaved(false), [card.id, profileId]);
- 
-   const [bigView, setBigView] = useBigViewPref();
+
+  const [bigView, setBigView] = useBigViewPref();
   useWakeLock(runner.status === "RUNNING");
 
-  // nice-to-have: im Overlay kein Background-Scroll
+  // kein Background-Scroll im BigView
   useEffect(() => {
     if (!bigView) return;
     const prev = document.body.style.overflow;
@@ -1658,8 +1677,9 @@ function Runner({
     return () => window.clearInterval(id);
   }, [runner.status, phases]);
 
-  const phase = phases[runner.phaseIndex];
+  const phase = phases[runner.phaseIndex] ?? phases[0];
 
+  // Phase-Wechsel Beep/Vibration
   const lastPhaseRef = useRef<number>(-1);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
@@ -1670,6 +1690,7 @@ function Runner({
     if (prefs.vibration && "vibrate" in navigator) navigator.vibrate([80, 40, 80]);
   }, [runner.phaseIndex, runner.status, prefs.sound, prefs.vibration]);
 
+  // Countdown Beeps 3-2-1
   const lastCountdownRef = useRef<number | null>(null);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
@@ -1734,103 +1755,175 @@ function Runner({
     onSaveLog(entry);
     setSaved(true);
   }
-   
-  if (bigView) {
-    const tone =
-      runner.status === "PAUSED"
-        ? "paused"
-        : runner.status === "FINISHED"
-        ? "done"
-        : phase.type === "WORK"
-        ? "work"
-        : phase.type === "REST"
-        ? "rest"
-        : phase.type === "WARMUP"
-        ? "warmup"
-        : "cooldown";
 
-    const progress =
-      phase?.durationSec > 0
-        ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec))
-        : 0;
+  const phaseType: PhaseType = phase?.type ?? "WORK";
+  const tone: FocusTone =
+    runner.status === "PAUSED"
+      ? "paused"
+      : runner.status === "FINISHED"
+      ? "done"
+      : phaseType === "WORK"
+      ? "work"
+      : phaseType === "REST"
+      ? "rest"
+      : phaseType === "WARMUP"
+      ? "warmup"
+      : "cooldown";
+
+  const bg = toneToBg(tone);
+
+  const progress =
+    phase?.durationSec > 0 ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec)) : 0;
+
+  const fsSupported =
+    typeof (document.documentElement as any)?.requestFullscreen === "function" &&
+    typeof (document as any)?.exitFullscreen === "function";
+
+  // =========================
+  // BIG VIEW (ohne CSS-Abhängigkeit)
+  // =========================
+  if (bigView) {
+    const overlayStyle: any = {
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 9999,
+      display: "flex",
+      flexDirection: "column",
+      padding:
+        "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+      background: bg,
+      color: "#fff",
+      textAlign: "center",
+    };
+
+    const btnSmall: any = {
+      fontSize: 16,
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.25)",
+      background: "rgba(255,255,255,0.12)",
+      color: "#fff",
+    };
+
+    const btnBig: any = {
+      fontSize: 18,
+      padding: "14px 16px",
+      borderRadius: 14,
+      border: "none",
+      background: "rgba(255,255,255,0.18)",
+      color: "#fff",
+      fontWeight: 800,
+    };
 
     return (
-      <div className={`focus-overlay ${tone}`}>
-        <div className="focus-top">
-          <button onClick={onBack}>←</button>
-          <div className="focus-top-title">{card.title}</div>
-          <div className="focus-top-actions">
-            <button onClick={() => setBigView(false)}>Details</button>
-            <button onClick={() => void toggleFullscreen()}>Vollbild</button>
-             <button onClick={() => setBigView(true)}>Großanzeige</button>
+      <div className={`focus-overlay ${tone}`} style={overlayStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button style={btnSmall} onClick={onBack}>
+            ←
+          </button>
+
+          <div style={{ flex: 1, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {card.title}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button style={btnSmall} onClick={() => setBigView(false)}>
+              Details
+            </button>
+            <button
+              style={btnSmall}
+              disabled={!fsSupported}
+              title={!fsSupported ? "Vollbild wird in diesem Browser nicht unterstützt (z.B. iOS Safari)" : ""}
+              onClick={() => void toggleFullscreen()}
+            >
+              Vollbild
+            </button>
           </div>
         </div>
 
-        <div className="focus-progress" aria-hidden>
-          <div className="focus-progress-bar" style={{ transform: `scaleX(${progress})` }} />
+        <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 12 }}>
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
         </div>
 
-        <div className="focus-main">
-          <div className="focus-label">
-            {runner.status === "IDLE"
-              ? "Bereit"
-              : runner.status === "PAUSED"
-              ? "Pausiert"
-              : runner.status === "FINISHED"
-              ? "Fertig"
-              : phase.label}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: "clamp(18px, 4vw, 48px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+            {runner.status === "IDLE" ? "Bereit" : runner.status === "PAUSED" ? "Pausiert" : runner.status === "FINISHED" ? "Fertig" : phase.label}
           </div>
 
-          <div className="focus-timer">{formatMMSS(runner.remainingSec)}</div>
+          <div style={{ fontSize: "clamp(72px, 18vw, 210px)", fontWeight: 900, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+            {formatMMSS(runner.remainingSec)}
+          </div>
 
-          <div className="focus-exercise">{card.exercise.name}</div>
+          <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
+            {card.exercise.name}
+          </div>
 
-          <div className="focus-sub">
+          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
             Profil: <b>{profileName}</b>
           </div>
 
-          <div className="focus-sub">
-            {phase.set > 0
-              ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}`
-              : "\u00A0"}
+          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
+            {phase.set > 0 ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}` : "\u00A0"}
           </div>
 
-          <div className="focus-sub2">
+          <div style={{ fontSize: 13, opacity: 0.9 }}>
             Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(total)}
           </div>
         </div>
 
-        <div className="focus-controls">
-          <button onClick={startPauseResume}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center", marginTop: 12 }}>
+          <button style={btnBig} onClick={startPauseResume}>
             {runner.status === "RUNNING" ? "Pause" : runner.status === "PAUSED" ? "Weiter" : "Start"}
           </button>
 
-          <button onClick={skip} disabled={runner.status === "IDLE" || runner.status === "FINISHED"}>
+          <button style={btnBig} onClick={skip} disabled={runner.status === "IDLE" || runner.status === "FINISHED"}>
             Skip
           </button>
 
-          <button onClick={stop}>Stop</button>
+          <button style={btnBig} onClick={stop}>
+            Stop
+          </button>
 
           {runner.status === "FINISHED" ? (
             !saved ? (
-              <button onClick={saveToHistory}>In Verlauf speichern</button>
+              <button style={btnBig} onClick={saveToHistory}>
+                In Verlauf speichern
+              </button>
             ) : (
-              <span className="focus-saved">Gespeichert ✅</span>
+              <span style={{ fontSize: 18, fontWeight: 900, padding: "14px 16px" }}>Gespeichert ✅</span>
             )
           ) : null}
         </div>
 
-        <div className="focus-bottom">
-          <div>Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1 {prefs.countdownBeeps ? "✅" : "❌"}</div>
+        <div style={{ fontSize: 12, opacity: 0.9, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+          <div>
+            Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1 {prefs.countdownBeeps ? "✅" : "❌"}
+          </div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
     );
   }
 
+  // =========================
+  // NORMAL VIEW (mit Button zum Einschalten)
+  // =========================
   return (
     <div style={{ marginTop: 16 }}>
-      <button onClick={onBack}>← Zurück</button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button onClick={onBack}>← Zurück</button>
+        <button onClick={() => setBigView(true)}>Großanzeige</button>
+        <button
+          disabled={!fsSupported}
+          title={!fsSupported ? "Vollbild wird in diesem Browser nicht unterstützt (z.B. iOS Safari)" : ""}
+          onClick={() => void toggleFullscreen()}
+        >
+          Vollbild
+        </button>
+      </div>
 
       <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
         Profil: <b>{profileName}</b>
@@ -1838,25 +1931,24 @@ function Runner({
 
       <h3 style={{ marginTop: 6 }}>{card.title}</h3>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-        <div style={{ fontSize: 14, opacity: 0.8 }}>{phase.label}</div>
-        <div style={{ fontSize: 26, fontWeight: 800, marginTop: 6 }}>{card.exercise.name}</div>
+      <div style={{ borderRadius: 16, padding: 12, background: bg, color: "#fff" }}>
+        <div style={{ fontSize: 14, opacity: 0.95, fontWeight: 800 }}>{phase.label}</div>
+        <div style={{ fontSize: 26, fontWeight: 900, marginTop: 6 }}>{card.exercise.name}</div>
 
-        <div style={{ fontSize: 44, fontWeight: 900, marginTop: 10 }}>{formatMMSS(runner.remainingSec)}</div>
-
-        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>
-          {phase.set > 0 ? (
-            <>
-              Satz {phase.set}/{card.timing.sets} · Wdh {phase.rep}/{card.timing.repsPerSet}
-            </>
-          ) : (
-            <>—</>
-          )}
+        <div style={{ fontSize: 44, fontWeight: 900, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>
+          {formatMMSS(runner.remainingSec)}
         </div>
 
-        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>
-          Gesamt verbleibend: {formatMMSS(runner.totalRemainingSec)}
-          {" · "}Gesamt: {formatMMSS(total)}
+        <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 13, opacity: 0.95 }}>
+          {phase.set > 0 ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}` : "—"}
+        </div>
+
+        <div style={{ marginTop: 6, fontSize: 13, opacity: 0.95 }}>
+          Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(total)}
         </div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
@@ -1872,7 +1964,11 @@ function Runner({
 
       <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={prefs.sound} onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={prefs.sound}
+            onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })}
+          />
           Sound
         </label>
 
@@ -1911,6 +2007,7 @@ function Runner({
   );
 }
 
+
 /* =========================
    REPS Runner
 ========================= */
@@ -1938,8 +2035,8 @@ function RepRunner({
 
   const [saved, setSaved] = useState(false);
   useEffect(() => setSaved(false), [card.id, profileId]);
-  
-   const [bigView, setBigView] = useBigViewPref();
+
+  const [bigView, setBigView] = useBigViewPref();
   useWakeLock(running);
 
   useEffect(() => {
@@ -1951,17 +2048,14 @@ function RepRunner({
     };
   }, [bigView]);
 
-   
   useEffect(() => {
     if (!running) return;
-
     const id = window.setInterval(() => {
       setT((prev) => {
         if (stage === "REST") return Math.max(0, prev - 1);
         return prev + 1;
       });
     }, 1000);
-
     return () => window.clearInterval(id);
   }, [running, stage]);
 
@@ -2009,99 +2103,153 @@ function RepRunner({
     setSaved(true);
   }
 
+  const tone: FocusTone = stage === "REST" ? "rest" : stage === "DONE" ? "done" : stage === "READY" ? "warmup" : "work";
+  const bg = toneToBg(tone);
+
+  const progress =
+    stage === "DONE"
+      ? 1
+      : stage === "REST" && card.restBetweenSetsSec > 0
+      ? Math.max(0, Math.min(1, 1 - t / card.restBetweenSetsSec))
+      : stage === "SET" && card.targetSetSec
+      ? Math.max(0, Math.min(1, t / card.targetSetSec))
+      : 0;
+
+  const headline =
+    stage === "READY" ? "Bereit" :
+    stage === "SET" ? `Satz ${idx + 1}/${card.sets.length}` :
+    stage === "REST" ? "Pause" :
+    "Fertig";
+
+  const fsSupported =
+    typeof (document.documentElement as any)?.requestFullscreen === "function" &&
+    typeof (document as any)?.exitFullscreen === "function";
+
   if (bigView) {
-    const tone =
-      stage === "REST" ? "rest" :
-      stage === "DONE" ? "done" :
-      stage === "READY" ? "warmup" :
-      "work";
+    const overlayStyle: any = {
+      position: "fixed",
+      top: 0, left: 0, right: 0, bottom: 0,
+      zIndex: 9999,
+      display: "flex",
+      flexDirection: "column",
+      padding:
+        "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+      background: bg,
+      color: "#fff",
+      textAlign: "center",
+    };
 
-    const progress =
-      stage === "DONE"
-        ? 1
-        : stage === "REST" && card.restBetweenSetsSec > 0
-        ? Math.max(0, Math.min(1, 1 - t / card.restBetweenSetsSec))
-        : stage === "SET" && card.targetSetSec
-        ? Math.max(0, Math.min(1, t / card.targetSetSec))
-        : 0;
+    const btnSmall: any = {
+      fontSize: 16,
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.25)",
+      background: "rgba(255,255,255,0.12)",
+      color: "#fff",
+    };
 
-    const headline =
-      stage === "READY" ? "Bereit" :
-      stage === "SET" ? `Satz ${idx + 1}/${card.sets.length}` :
-      stage === "REST" ? "Pause" :
-      "Fertig";
+    const btnBig: any = {
+      fontSize: 18,
+      padding: "14px 16px",
+      borderRadius: 14,
+      border: "none",
+      background: "rgba(255,255,255,0.18)",
+      color: "#fff",
+      fontWeight: 800,
+    };
 
-<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-  <button onClick={onBack}>← Zurück</button>
-  <button onClick={() => setBigView(true)}>Großanzeige</button>
-</div>
-     
     return (
-      <div className={`focus-overlay ${tone}`}>
-        <div className="focus-top">
-          <button onClick={onBack}>←</button>
-          <div className="focus-top-title">{card.title}</div>
-          <div className="focus-top-actions">
-            <button onClick={() => setBigView(false)}>Details</button>
-            <button onClick={() => void toggleFullscreen()}>Vollbild</button>
+      <div className={`focus-overlay ${tone}`} style={overlayStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button style={btnSmall} onClick={onBack}>←</button>
+
+          <div style={{ flex: 1, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {card.title}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button style={btnSmall} onClick={() => setBigView(false)}>Details</button>
+            <button
+              style={btnSmall}
+              disabled={!fsSupported}
+              title={!fsSupported ? "Vollbild wird in diesem Browser nicht unterstützt (z.B. iOS Safari)" : ""}
+              onClick={() => void toggleFullscreen()}
+            >
+              Vollbild
+            </button>
           </div>
         </div>
 
-        <div className="focus-progress" aria-hidden>
-          <div className="focus-progress-bar" style={{ transform: `scaleX(${progress})` }} />
+        <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 12 }}>
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
         </div>
 
-        <div className="focus-main">
-          <div className="focus-label">{headline}</div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: "clamp(18px, 4vw, 48px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+            {headline}
+          </div>
 
-          <div className="focus-timer">{formatMMSS(t)}</div>
+          <div style={{ fontSize: "clamp(72px, 18vw, 210px)", fontWeight: 900, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+            {formatMMSS(t)}
+          </div>
 
-          <div className="focus-exercise">
+          <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
             {stage === "SET" && current ? (current.exercise || "—") : stage === "REST" ? "Atmen" : stage === "DONE" ? "✅" : "Start"}
           </div>
 
-          <div className="focus-sub">
+          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
             {stage === "SET" && current ? `${current.reps} Wdh · ${current.weightKg} kg Zusatz` : "\u00A0"}
           </div>
 
-          <div className="focus-sub2">
+          <div style={{ fontSize: 13, opacity: 0.9 }}>
             Profil: <b>{profileName}</b> · Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg
           </div>
         </div>
 
-        <div className="focus-controls">
-          {stage === "READY" ? <button onClick={startWorkout}>Start</button> : null}
-          {stage === "SET" ? <button onClick={stopSet}>Stop (Satz fertig)</button> : null}
-          {stage === "REST" ? <button onClick={() => setT(0)}>Skip</button> : null}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center", marginTop: 12 }}>
+          {stage === "READY" ? <button style={btnBig} onClick={startWorkout}>Start</button> : null}
+          {stage === "SET" ? <button style={btnBig} onClick={stopSet}>Stop (Satz fertig)</button> : null}
+          {stage === "REST" ? <button style={btnBig} onClick={() => setT(0)}>Skip</button> : null}
 
           {stage === "DONE" ? (
             !saved ? (
-              <button onClick={saveToHistory}>In Verlauf speichern</button>
+              <button style={btnBig} onClick={saveToHistory}>In Verlauf speichern</button>
             ) : (
-              <span className="focus-saved">Gespeichert ✅</span>
+              <span style={{ fontSize: 18, fontWeight: 900, padding: "14px 16px" }}>Gespeichert ✅</span>
             )
           ) : null}
 
-          {stage === "DONE" ? <button onClick={startWorkout}>Nochmal</button> : null}
+          {stage === "DONE" ? <button style={btnBig} onClick={startWorkout}>Nochmal</button> : null}
         </div>
 
-        <div className="focus-bottom">
+        <div style={{ fontSize: 12, opacity: 0.9, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
           <div>Tip: Handy quer = noch größer</div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
     );
   }
-   
+
+  // Normal View + Button zum Einschalten
   return (
     <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
-      <button onClick={onBack}>← Zurück</button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button onClick={onBack}>← Zurück</button>
+        <button onClick={() => setBigView(true)}>Großanzeige</button>
+        <button
+          disabled={!fsSupported}
+          title={!fsSupported ? "Vollbild wird in diesem Browser nicht unterstützt (z.B. iOS Safari)" : ""}
+          onClick={() => void toggleFullscreen()}
+        >
+          Vollbild
+        </button>
+      </div>
 
       <div style={{ fontSize: 12, opacity: 0.7 }}>
         Profil: <b>{profileName}</b>
       </div>
 
-      <div style={{ fontWeight: 800, fontSize: 18 }}>{card.title}</div>
+      <div style={{ fontWeight: 900, fontSize: 18 }}>{card.title}</div>
 
       <div style={{ fontSize: 13, opacity: 0.85 }}>
         Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg bewegt (Zusatzgewicht)
@@ -2110,8 +2258,8 @@ function RepRunner({
       {stage === "READY" && <button onClick={startWorkout}>Start</button>}
 
       {stage === "SET" && current && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontWeight: 700 }}>
+        <div style={{ borderRadius: 16, padding: 12, background: bg, color: "#fff" }}>
+          <div style={{ fontWeight: 900 }}>
             Satz {idx + 1}/{card.sets.length}
           </div>
 
@@ -2121,8 +2269,12 @@ function RepRunner({
 
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
 
+          <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
+            <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+          </div>
+
           {card.targetSetSec ? (
-            <div style={{ fontSize: 13, opacity: 0.8 }}>Zielzeit: {formatMMSS(card.targetSetSec)}</div>
+            <div style={{ fontSize: 13, opacity: 0.9, marginTop: 8 }}>Zielzeit: {formatMMSS(card.targetSetSec)}</div>
           ) : null}
 
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
@@ -2132,10 +2284,14 @@ function RepRunner({
       )}
 
       {stage === "REST" && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontWeight: 700 }}>Pause</div>
+        <div style={{ borderRadius: 16, padding: 12, background: bg, color: "#fff" }}>
+          <div style={{ fontWeight: 900 }}>Pause</div>
 
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
+
+          <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
+            <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+          </div>
 
           <button onClick={() => setT(0)} style={{ marginTop: 12 }}>
             Skip
@@ -2144,8 +2300,8 @@ function RepRunner({
       )}
 
       {stage === "DONE" && (
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-          <div style={{ fontWeight: 800 }}>Fertig ✅</div>
+        <div style={{ borderRadius: 16, padding: 12, background: "#e8ffe8" }}>
+          <div style={{ fontWeight: 900 }}>Fertig ✅</div>
 
           <div style={{ marginTop: 8 }}>
             Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
@@ -2160,11 +2316,7 @@ function RepRunner({
           </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {!saved ? (
-              <button onClick={saveToHistory}>In Verlauf speichern</button>
-            ) : (
-              <span style={{ fontWeight: 700 }}>Gespeichert ✅</span>
-            )}
+            {!saved ? <button onClick={saveToHistory}>In Verlauf speichern</button> : <span style={{ fontWeight: 800 }}>Gespeichert ✅</span>}
             <button onClick={startWorkout}>Nochmal</button>
           </div>
         </div>

@@ -1499,12 +1499,7 @@ function RepEditor({
           </div>
         ))}
       </div>
-       
-<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-  <button onClick={onBack}>← Zurück</button>
-  <button onClick={() => setBigView(true)}>Großanzeige</button>
-</div>
-       
+            
       <div style={{ fontSize: 13, opacity: 0.85 }}>
         Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
       </div>
@@ -2036,6 +2031,11 @@ function RepRunner({
       stage === "REST" ? "Pause" :
       "Fertig";
 
+<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+  <button onClick={onBack}>← Zurück</button>
+  <button onClick={() => setBigView(true)}>Großanzeige</button>
+</div>
+     
     return (
       <div className={`focus-overlay ${tone}`}>
         <div className="focus-top">

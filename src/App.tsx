@@ -1499,7 +1499,12 @@ function RepEditor({
           </div>
         ))}
       </div>
-
+       
+<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+  <button onClick={onBack}>← Zurück</button>
+  <button onClick={() => setBigView(true)}>Großanzeige</button>
+</div>
+       
       <div style={{ fontSize: 13, opacity: 0.85 }}>
         Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
       </div>
@@ -1601,6 +1606,19 @@ function Runner({
 
   const [saved, setSaved] = useState(false);
   useEffect(() => setSaved(false), [card.id, profileId]);
+ 
+   const [bigView, setBigView] = useBigViewPref();
+  useWakeLock(runner.status === "RUNNING");
+
+  // nice-to-have: im Overlay kein Background-Scroll
+  useEffect(() => {
+    if (!bigView) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [bigView]);
 
   useEffect(() => {
     setRunner({
@@ -1721,6 +1739,99 @@ function Runner({
     onSaveLog(entry);
     setSaved(true);
   }
+   
+  if (bigView) {
+    const tone =
+      runner.status === "PAUSED"
+        ? "paused"
+        : runner.status === "FINISHED"
+        ? "done"
+        : phase.type === "WORK"
+        ? "work"
+        : phase.type === "REST"
+        ? "rest"
+        : phase.type === "WARMUP"
+        ? "warmup"
+        : "cooldown";
+
+    const progress =
+      phase?.durationSec > 0
+        ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec))
+        : 0;
+
+    return (
+      <div className={`focus-overlay ${tone}`}>
+        <div className="focus-top">
+          <button onClick={onBack}>←</button>
+          <div className="focus-top-title">{card.title}</div>
+          <div className="focus-top-actions">
+            <button onClick={() => setBigView(false)}>Details</button>
+            <button onClick={() => void toggleFullscreen()}>Vollbild</button>
+             <button onClick={() => setBigView(true)}>Großanzeige</button>
+          </div>
+        </div>
+
+        <div className="focus-progress" aria-hidden>
+          <div className="focus-progress-bar" style={{ transform: `scaleX(${progress})` }} />
+        </div>
+
+        <div className="focus-main">
+          <div className="focus-label">
+            {runner.status === "IDLE"
+              ? "Bereit"
+              : runner.status === "PAUSED"
+              ? "Pausiert"
+              : runner.status === "FINISHED"
+              ? "Fertig"
+              : phase.label}
+          </div>
+
+          <div className="focus-timer">{formatMMSS(runner.remainingSec)}</div>
+
+          <div className="focus-exercise">{card.exercise.name}</div>
+
+          <div className="focus-sub">
+            Profil: <b>{profileName}</b>
+          </div>
+
+          <div className="focus-sub">
+            {phase.set > 0
+              ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}`
+              : "\u00A0"}
+          </div>
+
+          <div className="focus-sub2">
+            Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(total)}
+          </div>
+        </div>
+
+        <div className="focus-controls">
+          <button onClick={startPauseResume}>
+            {runner.status === "RUNNING" ? "Pause" : runner.status === "PAUSED" ? "Weiter" : "Start"}
+          </button>
+
+          <button onClick={skip} disabled={runner.status === "IDLE" || runner.status === "FINISHED"}>
+            Skip
+          </button>
+
+          <button onClick={stop}>Stop</button>
+
+          {runner.status === "FINISHED" ? (
+            !saved ? (
+              <button onClick={saveToHistory}>In Verlauf speichern</button>
+            ) : (
+              <span className="focus-saved">Gespeichert ✅</span>
+            )
+          ) : null}
+        </div>
+
+        <div className="focus-bottom">
+          <div>Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1 {prefs.countdownBeeps ? "✅" : "❌"}</div>
+          <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginTop: 16 }}>
@@ -1832,7 +1943,20 @@ function RepRunner({
 
   const [saved, setSaved] = useState(false);
   useEffect(() => setSaved(false), [card.id, profileId]);
+  
+   const [bigView, setBigView] = useBigViewPref();
+  useWakeLock(running);
 
+  useEffect(() => {
+    if (!bigView) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [bigView]);
+
+   
   useEffect(() => {
     if (!running) return;
 
@@ -1890,6 +2014,85 @@ function RepRunner({
     setSaved(true);
   }
 
+  if (bigView) {
+    const tone =
+      stage === "REST" ? "rest" :
+      stage === "DONE" ? "done" :
+      stage === "READY" ? "warmup" :
+      "work";
+
+    const progress =
+      stage === "DONE"
+        ? 1
+        : stage === "REST" && card.restBetweenSetsSec > 0
+        ? Math.max(0, Math.min(1, 1 - t / card.restBetweenSetsSec))
+        : stage === "SET" && card.targetSetSec
+        ? Math.max(0, Math.min(1, t / card.targetSetSec))
+        : 0;
+
+    const headline =
+      stage === "READY" ? "Bereit" :
+      stage === "SET" ? `Satz ${idx + 1}/${card.sets.length}` :
+      stage === "REST" ? "Pause" :
+      "Fertig";
+
+    return (
+      <div className={`focus-overlay ${tone}`}>
+        <div className="focus-top">
+          <button onClick={onBack}>←</button>
+          <div className="focus-top-title">{card.title}</div>
+          <div className="focus-top-actions">
+            <button onClick={() => setBigView(false)}>Details</button>
+            <button onClick={() => void toggleFullscreen()}>Vollbild</button>
+          </div>
+        </div>
+
+        <div className="focus-progress" aria-hidden>
+          <div className="focus-progress-bar" style={{ transform: `scaleX(${progress})` }} />
+        </div>
+
+        <div className="focus-main">
+          <div className="focus-label">{headline}</div>
+
+          <div className="focus-timer">{formatMMSS(t)}</div>
+
+          <div className="focus-exercise">
+            {stage === "SET" && current ? (current.exercise || "—") : stage === "REST" ? "Atmen" : stage === "DONE" ? "✅" : "Start"}
+          </div>
+
+          <div className="focus-sub">
+            {stage === "SET" && current ? `${current.reps} Wdh · ${current.weightKg} kg Zusatz` : "\u00A0"}
+          </div>
+
+          <div className="focus-sub2">
+            Profil: <b>{profileName}</b> · Gesamt: {totalReps} Wdh · {totalKg.toFixed(1)} kg
+          </div>
+        </div>
+
+        <div className="focus-controls">
+          {stage === "READY" ? <button onClick={startWorkout}>Start</button> : null}
+          {stage === "SET" ? <button onClick={stopSet}>Stop (Satz fertig)</button> : null}
+          {stage === "REST" ? <button onClick={() => setT(0)}>Skip</button> : null}
+
+          {stage === "DONE" ? (
+            !saved ? (
+              <button onClick={saveToHistory}>In Verlauf speichern</button>
+            ) : (
+              <span className="focus-saved">Gespeichert ✅</span>
+            )
+          ) : null}
+
+          {stage === "DONE" ? <button onClick={startWorkout}>Nochmal</button> : null}
+        </div>
+
+        <div className="focus-bottom">
+          <div>Tip: Handy quer = noch größer</div>
+          <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+        </div>
+      </div>
+    );
+  }
+   
   return (
     <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
       <button onClick={onBack}>← Zurück</button>
@@ -2556,4 +2759,82 @@ function ImportView({
       </div>
     </div>
   );
+}
+
+/* =========================
+   Focus Mode / Big Display Helpers
+========================= */
+
+const BIGVIEW_KEY = "interval_trainer_big_view_v1";
+
+function useBigViewPref() {
+  const [bigView, setBigView] = useState<boolean>(() => {
+    try {
+      // default: EIN (damit "immer groß" sofort wirkt)
+      return localStorage.getItem(BIGVIEW_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BIGVIEW_KEY, bigView ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [bigView]);
+
+  return [bigView, setBigView] as const;
+}
+
+// Bildschirm wach halten (wenn Browser es kann)
+// Hinweis: Funktioniert meist in Chrome/Edge (Android/Desktop). iOS kann eingeschränkt sein.
+function useWakeLock(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+
+    const navAny = navigator as any;
+    if (!navAny.wakeLock?.request) return;
+
+    let lock: any = null;
+    let stopped = false;
+
+    const request = async () => {
+      try {
+        if (stopped) return;
+        if (document.visibilityState !== "visible") return;
+        lock = await navAny.wakeLock.request("screen");
+      } catch {
+        // ignore
+      }
+    };
+
+    request();
+
+    const onVis = () => request();
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      stopped = true;
+      document.removeEventListener("visibilitychange", onVis);
+      try {
+        lock?.release?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, [enabled]);
+}
+
+async function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen();
+    } else {
+      await document.exitFullscreen();
+    }
+  } catch {
+    // ignore
+  }
 }

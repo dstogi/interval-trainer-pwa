@@ -22,6 +22,7 @@ type TimingConfig = {
 type Exercise = {
   name: string;
   notes: string;
+  image?: string; // optional: Data-URL (Upload) oder URL, wird im Countdown/Großanzeige gezeigt
 };
 
 type CardKind = "TIME" | "REPS";
@@ -124,7 +125,10 @@ type RunnerState = {
   phaseIndex: number;
   remainingSec: number;
   totalRemainingSec: number;
+
+  preWorkSec: number; // Countdown 4..1 vor WORK, 0 = aus
 };
+
 
 /* =========================
    Profiles + History Types
@@ -468,9 +472,17 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
       exercise: {
-        name: typeof raw.exercise?.name === "string" ? raw.exercise.name : "",
-        notes: typeof raw.exercise?.notes === "string" ? raw.exercise.notes : "",
-      },
+exercise: {
+  name: typeof raw.exercise?.name === "string" ? raw.exercise.name : "",
+  notes: typeof raw.exercise?.notes === "string" ? raw.exercise.notes : "",
+  image:
+    typeof raw.exercise?.image === "string"
+      ? raw.exercise.image
+      : typeof raw.exercise?.imageUrl === "string"
+      ? raw.exercise.imageUrl
+      : undefined,
+},
+
       timing: {
         warmupSec: Number(t.warmupSec) || 0,
         workSec: Number(t.workSec) || 20,
@@ -1288,6 +1300,13 @@ function Editor({
   const [exercise, setExercise] = useState(initial?.exercise.name ?? "");
   const [notes, setNotes] = useState(initial?.exercise.notes ?? "");
 
+  // Bild: entweder Data-URL (Upload) oder URL
+  const [image, setImage] = useState<string>(initial?.exercise.image ?? "");
+  const [imageUrlInput, setImageUrlInput] = useState<string>(() => {
+    const v = initial?.exercise.image ?? "";
+    return v && !v.startsWith("data:") ? v : "";
+  });
+
   const [warmup, setWarmup] = useState(formatMMSS(initial?.timing.warmupSec ?? 0));
   const [work, setWork] = useState(formatMMSS(initial?.timing.workSec ?? 20));
   const [restRep, setRestRep] = useState(formatMMSS(initial?.timing.restBetweenRepsSec ?? 0));
@@ -1298,6 +1317,87 @@ function Editor({
 
   const [error, setError] = useState<string>("");
 
+  // ---------- Image Helpers (lokal) ----------
+  function readFileAsDataURL(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("FileReader error"));
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Image load error"));
+      img.src = src;
+    });
+  }
+
+  // optionales Downscaling (hilft localStorage nicht zu sprengen)
+  async function fileToResizedDataURL(file: File, maxSide = 1200, quality = 0.85): Promise<string> {
+    const dataUrl = await readFileAsDataURL(file);
+
+    // Wenn es kein Bild ist -> einfach so speichern
+    if (!dataUrl.startsWith("data:image/")) return dataUrl;
+
+    try {
+      const img = await loadImage(dataUrl);
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+
+      const maxDim = Math.max(w, h);
+      const scale = maxDim > maxSide ? maxSide / maxDim : 1;
+
+      const cw = Math.max(1, Math.round(w * scale));
+      const ch = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return dataUrl;
+
+      ctx.drawImage(img, 0, 0, cw, ch);
+
+      // JPEG macht i.d.R. kleinere Daten als PNG
+      return canvas.toDataURL("image/jpeg", quality);
+    } catch {
+      return dataUrl;
+    }
+  }
+
+  async function onPickImageFile(file: File | null) {
+    if (!file) return;
+
+    // grobe Warnung bei sehr großen Dateien
+    if (file.size > 2_000_000) {
+      const ok = window.confirm(
+        `Das Bild ist ${(file.size / 1024 / 1024).toFixed(1)} MB groß. ` +
+          `Große Bilder können localStorage sprengen. Trotzdem benutzen?`
+      );
+      if (!ok) return;
+    }
+
+    try {
+      const resized = await fileToResizedDataURL(file);
+      setImage(resized);
+      setImageUrlInput(""); // URL-Feld leeren, weil wir jetzt DataURL nutzen
+    } catch {
+      window.alert("Bild konnte nicht geladen werden.");
+    }
+  }
+
+  function applyImageUrl(url: string) {
+    const trimmed = url.trim();
+    setImageUrlInput(trimmed);
+    setImage(trimmed);
+  }
+
+  // ---------- Save ----------
   function save() {
     setError("");
 
@@ -1329,7 +1429,11 @@ function Editor({
       kind: "TIME",
       id: initial?.id ?? makeId(),
       title: title.trim(),
-      exercise: { name: exercise.trim(), notes: notes.trim() },
+      exercise: {
+        name: exercise.trim(),
+        notes: notes.trim(),
+        image: image.trim() ? image.trim() : undefined,
+      },
       timing,
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
@@ -1362,6 +1466,72 @@ function Editor({
         Notizen (optional)
         <input style={{ width: "100%" }} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </label>
+
+      {/* Bildblock */}
+      <div style={{ border: "1px dashed #ccc", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+        <div style={{ fontWeight: 800 }}>Übungsbild (optional)</div>
+        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+          Wird im <b>Countdown 4‑3‑2‑1</b> und in der <b>Großanzeige</b> als Hintergrund eingeblendet.
+          <br />
+          Tipp: eher kleines Bild nutzen (wird lokal gespeichert).
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              void onPickImageFile(f);
+              // damit derselbe File nochmal gewählt werden kann:
+              e.currentTarget.value = "";
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() => {
+              setImage("");
+              setImageUrlInput("");
+            }}
+            disabled={!image}
+          >
+            Bild entfernen
+          </button>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>…oder Bild‑URL einfügen:</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              style={{ flex: "1 1 260px" }}
+              placeholder="https://…"
+              value={imageUrlInput}
+              onChange={(e) => setImageUrlInput(e.target.value)}
+            />
+            <button type="button" onClick={() => applyImageUrl(imageUrlInput)}>
+              URL übernehmen
+            </button>
+          </div>
+        </div>
+
+        {image ? (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vorschau:</div>
+            <img
+              src={image}
+              alt="Übungsbild"
+              style={{
+                width: "100%",
+                maxHeight: 240,
+                objectFit: "cover",
+                borderRadius: 12,
+                border: "1px solid #ddd",
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
 
       <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
         <TimeField label="Warmup" value={warmup} onChange={setWarmup} />
@@ -1608,6 +1778,8 @@ function Runner({
   profileName: string;
   onSaveLog: (entry: WorkoutLogEntry) => void;
 }) {
+  const PRE_WORK_COUNTDOWN = 4; // 4..3..2..1
+
   const phases = useMemo(() => buildPhases(card), [card]);
   const total = useMemo(() => totalSessionSec(phases), [phases]);
 
@@ -1616,6 +1788,7 @@ function Runner({
     phaseIndex: 0,
     remainingSec: phases[0]?.durationSec ?? 0,
     totalRemainingSec: total,
+    preWorkSec: 0,
   }));
 
   const [saved, setSaved] = useState(false);
@@ -1624,7 +1797,7 @@ function Runner({
   const [bigView, setBigView] = useBigViewPref();
   useWakeLock(runner.status === "RUNNING");
 
-  // kein Background-Scroll im BigView
+  // im BigView kein Background-Scroll
   useEffect(() => {
     if (!bigView) return;
     const prev = document.body.style.overflow;
@@ -1640,9 +1813,11 @@ function Runner({
       phaseIndex: 0,
       remainingSec: phases[0]?.durationSec ?? 0,
       totalRemainingSec: total,
+      preWorkSec: 0,
     });
   }, [card.id, total, phases]);
 
+  // Tick
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
 
@@ -1650,6 +1825,13 @@ function Runner({
       setRunner((prev) => {
         if (prev.status !== "RUNNING") return prev;
 
+        // 1) Pre-Work Countdown läuft -> Work Timer noch NICHT runterzählen
+        if (prev.preWorkSec > 0) {
+          const nextPre = Math.max(0, prev.preWorkSec - 1);
+          return { ...prev, preWorkSec: nextPre };
+        }
+
+        // 2) normaler Timer
         if (prev.remainingSec > 1) {
           const nextRem = prev.remainingSec - 1;
           return {
@@ -1659,17 +1841,24 @@ function Runner({
           };
         }
 
+        // 3) Phase endet -> nächste Phase
         const nextIndex = prev.phaseIndex + 1;
         if (nextIndex >= phases.length) {
-          return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0 };
+          return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
         }
 
-        const nextRem = phases[nextIndex].durationSec;
+        const nextPhase = phases[nextIndex];
+        const nextRem = nextPhase.durationSec;
+
+        // Wenn die nächste Phase WORK ist -> Countdown starten
+        const nextPre = nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
+
         return {
           ...prev,
           phaseIndex: nextIndex,
           remainingSec: nextRem,
           totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem),
+          preWorkSec: nextPre,
         };
       });
     }, 1000);
@@ -1679,7 +1868,7 @@ function Runner({
 
   const phase = phases[runner.phaseIndex] ?? phases[0];
 
-  // Phase-Wechsel Beep/Vibration
+  // Beep/Vibration beim Phasenwechsel (wie bisher)
   const lastPhaseRef = useRef<number>(-1);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
@@ -1690,11 +1879,33 @@ function Runner({
     if (prefs.vibration && "vibrate" in navigator) navigator.vibrate([80, 40, 80]);
   }, [runner.phaseIndex, runner.status, prefs.sound, prefs.vibration]);
 
-  // Countdown Beeps 3-2-1
+  // Beep im Pre-Work Countdown (4..1) + "GO" bei 0
+  const prevPreRef = useRef<number>(0);
+  useEffect(() => {
+    const prev = prevPreRef.current;
+    prevPreRef.current = runner.preWorkSec;
+
+    if (runner.status !== "RUNNING") return;
+
+    if (runner.preWorkSec > 0) {
+      // leiser kurzer Beep pro Zahl
+      if (prefs.sound) beepOnce(660, 70, 0.12);
+      return;
+    }
+
+    // wenn 1 -> 0: "GO"
+    if (prev === 1 && runner.preWorkSec === 0) {
+      if (prefs.sound) beepOnce(990, 110, 0.18);
+      if (prefs.vibration && "vibrate" in navigator) navigator.vibrate([90]);
+    }
+  }, [runner.preWorkSec, runner.status, prefs.sound, prefs.vibration]);
+
+  // kleiner 3-2-1 Beep am Ende der Phase (dein bestehendes Feature)
   const lastCountdownRef = useRef<number | null>(null);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
     if (!prefs.countdownBeeps) return;
+    if (runner.preWorkSec > 0) return; // während PreCount nicht doppelt piepsen
 
     if (runner.remainingSec <= 3 && runner.remainingSec >= 1) {
       if (lastCountdownRef.current !== runner.remainingSec) {
@@ -1704,18 +1915,21 @@ function Runner({
     } else {
       lastCountdownRef.current = null;
     }
-  }, [runner.remainingSec, runner.status, prefs.countdownBeeps, prefs.sound]);
+  }, [runner.remainingSec, runner.preWorkSec, runner.status, prefs.countdownBeeps, prefs.sound]);
 
   function startPauseResume() {
     setRunner((prev) => {
       if (prev.status === "IDLE" || prev.status === "FINISHED") {
         const idx = 0;
         const rem = phases[0]?.durationSec ?? 0;
+
+        const firstIsWork = phases[0]?.type === "WORK";
         return {
           status: "RUNNING",
           phaseIndex: idx,
           remainingSec: rem,
           totalRemainingSec: computeRemainingTotal(phases, idx, rem),
+          preWorkSec: firstIsWork ? PRE_WORK_COUNTDOWN : 0,
         };
       }
       if (prev.status === "RUNNING") return { ...prev, status: "PAUSED" };
@@ -1726,15 +1940,23 @@ function Runner({
 
   function skip() {
     setRunner((prev) => {
+      // wenn wir im Pre-Countdown sind -> Countdown skippen (Work startet sofort)
+      if (prev.preWorkSec > 0) {
+        return { ...prev, preWorkSec: 0 };
+      }
+
       const nextIndex = prev.phaseIndex + 1;
-      if (nextIndex >= phases.length) return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0 };
-      const nextRem = phases[nextIndex].durationSec;
+      if (nextIndex >= phases.length) return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
+
+      const nextPhase = phases[nextIndex];
+      const nextRem = nextPhase.durationSec;
       return {
         ...prev,
         status: "RUNNING",
         phaseIndex: nextIndex,
         remainingSec: nextRem,
         totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem),
+        preWorkSec: nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0,
       };
     });
   }
@@ -1745,6 +1967,7 @@ function Runner({
       phaseIndex: 0,
       remainingSec: phases[0]?.durationSec ?? 0,
       totalRemainingSec: total,
+      preWorkSec: 0,
     });
   }
 
@@ -1756,47 +1979,80 @@ function Runner({
     setSaved(true);
   }
 
-  const phaseType: PhaseType = phase?.type ?? "WORK";
-  const tone: FocusTone =
+  const showPreWork = runner.status === "RUNNING" && phase?.type === "WORK" && runner.preWorkSec > 0;
+
+  // Farben (ohne CSS-Abhängigkeit)
+  const tone =
     runner.status === "PAUSED"
       ? "paused"
       : runner.status === "FINISHED"
       ? "done"
-      : phaseType === "WORK"
+      : phase.type === "WORK"
       ? "work"
-      : phaseType === "REST"
+      : phase.type === "REST"
       ? "rest"
-      : phaseType === "WARMUP"
+      : phase.type === "WARMUP"
       ? "warmup"
       : "cooldown";
 
-  const bg = toneToBg(tone);
+  const toneBg =
+    tone === "work"
+      ? "#0a7a4a"
+      : tone === "rest"
+      ? "#202124"
+      : tone === "warmup"
+      ? "#0b3a6d"
+      : tone === "cooldown"
+      ? "#0b3a6d"
+      : tone === "paused"
+      ? "#3a3a3a"
+      : "#135d2e";
 
-  const progress =
+  const bgStyle: any =
+    card.exercise.image
+      ? {
+          backgroundColor: toneBg,
+          backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }
+      : { backgroundColor: toneBg };
+
+  const workBgStyle: any =
+    card.exercise.image
+      ? {
+          backgroundColor: "#0a7a4a",
+          backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }
+      : { backgroundColor: "#0a7a4a" };
+
+  const phaseProgress =
     phase?.durationSec > 0 ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec)) : 0;
+  const preProgress =
+    PRE_WORK_COUNTDOWN > 0 ? Math.max(0, Math.min(1, 1 - runner.preWorkSec / PRE_WORK_COUNTDOWN)) : 0;
+  const progress = showPreWork ? preProgress : phaseProgress;
 
   const fsSupported =
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&
     typeof (document as any)?.exitFullscreen === "function";
 
-  // =========================
-  // BIG VIEW (ohne CSS-Abhängigkeit)
-  // =========================
+  // ---------- BIG VIEW ----------
   if (bigView) {
     const overlayStyle: any = {
       position: "fixed",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
+      inset: 0,
       zIndex: 9999,
       display: "flex",
       flexDirection: "column",
       padding:
         "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
-      background: bg,
       color: "#fff",
       textAlign: "center",
+      ...bgStyle,
     };
 
     const btnSmall: any = {
@@ -1819,7 +2075,8 @@ function Runner({
     };
 
     return (
-      <div className={`focus-overlay ${tone}`} style={overlayStyle}>
+      <div className={`focus-overlay ${tone}`} style={{ ...overlayStyle, position: "fixed" }}>
+        {/* Top Bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button style={btnSmall} onClick={onBack}>
             ←
@@ -1844,10 +2101,12 @@ function Runner({
           </div>
         </div>
 
+        {/* Progress */}
         <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 12 }}>
-          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
         </div>
 
+        {/* Main */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 10 }}>
           <div style={{ fontSize: "clamp(18px, 4vw, 48px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
             {runner.status === "IDLE" ? "Bereit" : runner.status === "PAUSED" ? "Pausiert" : runner.status === "FINISHED" ? "Fertig" : phase.label}
@@ -1874,6 +2133,7 @@ function Runner({
           </div>
         </div>
 
+        {/* Controls */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center", marginTop: 12 }}>
           <button style={btnBig} onClick={startPauseResume}>
             {runner.status === "RUNNING" ? "Pause" : runner.status === "PAUSED" ? "Weiter" : "Start"}
@@ -1898,22 +2158,73 @@ function Runner({
           ) : null}
         </div>
 
+        {/* Bottom */}
         <div style={{ fontSize: 12, opacity: 0.9, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
           <div>
             Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1 {prefs.countdownBeeps ? "✅" : "❌"}
           </div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
+
+        {/* PRE-WORK COUNTDOWN OVERLAY */}
+        {showPreWork ? (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10000,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
+              textAlign: "center",
+              color: "#fff",
+              ...workBgStyle,
+              padding:
+                "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+            }}
+          >
+            <div style={{ position: "absolute", top: 12, right: 12 }}>
+              <button
+                style={{
+                  fontSize: 16,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.25)",
+                  background: "rgba(255,255,255,0.12)",
+                  color: "#fff",
+                }}
+                onClick={skip}
+              >
+                Skip
+              </button>
+            </div>
+
+            <div style={{ fontSize: "clamp(18px, 4vw, 44px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+              NÄCHSTE: ARBEIT
+            </div>
+
+            <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
+              {card.exercise.name}
+            </div>
+
+            <div style={{ fontSize: "clamp(140px, 28vw, 360px)", fontWeight: 900, lineHeight: 1, marginTop: 18 }}>
+              {runner.preWorkSec}
+            </div>
+
+            <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
+              Los geht’s in {runner.preWorkSec}…
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
 
-  // =========================
-  // NORMAL VIEW (mit Button zum Einschalten)
-  // =========================
+  // ---------- NORMAL VIEW ----------
   return (
     <div style={{ marginTop: 16 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button onClick={onBack}>← Zurück</button>
         <button onClick={() => setBigView(true)}>Großanzeige</button>
         <button
@@ -1931,7 +2242,7 @@ function Runner({
 
       <h3 style={{ marginTop: 6 }}>{card.title}</h3>
 
-      <div style={{ borderRadius: 16, padding: 12, background: bg, color: "#fff" }}>
+      <div style={{ borderRadius: 16, padding: 12, color: "#fff", ...bgStyle }}>
         <div style={{ fontSize: 14, opacity: 0.95, fontWeight: 800 }}>{phase.label}</div>
         <div style={{ fontSize: 26, fontWeight: 900, marginTop: 6 }}>{card.exercise.name}</div>
 
@@ -1940,7 +2251,7 @@ function Runner({
         </div>
 
         <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
-          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
         </div>
 
         <div style={{ marginTop: 10, fontSize: 13, opacity: 0.95 }}>
@@ -1964,11 +2275,7 @@ function Runner({
 
       <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={prefs.sound}
-            onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })}
-          />
+          <input type="checkbox" checked={prefs.sound} onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })} />
           Sound
         </label>
 
@@ -2003,6 +2310,58 @@ function Runner({
           </div>
         </div>
       )}
+
+      {/* PRE-WORK COUNTDOWN auch in Normalansicht (riesig) */}
+      {showPreWork ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            textAlign: "center",
+            color: "#fff",
+            ...workBgStyle,
+            padding:
+              "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+          }}
+        >
+          <div style={{ position: "absolute", top: 12, right: 12 }}>
+            <button
+              style={{
+                fontSize: 16,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.25)",
+                background: "rgba(255,255,255,0.12)",
+                color: "#fff",
+              }}
+              onClick={skip}
+            >
+              Skip
+            </button>
+          </div>
+
+          <div style={{ fontSize: "clamp(18px, 4vw, 44px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+            NÄCHSTE: ARBEIT
+          </div>
+
+          <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
+            {card.exercise.name}
+          </div>
+
+          <div style={{ fontSize: "clamp(140px, 28vw, 360px)", fontWeight: 900, lineHeight: 1, marginTop: 18 }}>
+            {runner.preWorkSec}
+          </div>
+
+          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
+            Los geht’s in {runner.preWorkSec}…
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

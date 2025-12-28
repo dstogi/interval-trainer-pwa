@@ -426,13 +426,15 @@ function totalSessionSec(phases: Phase[]): number {
   return phases.reduce((acc, p) => acc + p.durationSec, 0);
 }
 
+/* ===== ANFANG TEIL 1: computeRemainingTotal ===== */
 function computeRemainingTotal(phases: Phase[], idx: number, remainingSec: number): number {
   let total = remainingSec;
   for (let i = idx + 1; i < phases.length; i++) total += phases[i].durationSec;
   return total;
 }
+/* ===== ENDE TEIL 1: computeRemainingTotal ===== */
 
-// Real remaining time inkl. Countdown vor jedem WORK
+/* ===== ANFANG TEIL 2: computeRemainingTotalWithPreWork ===== */
 function computeRemainingTotalWithPreWork(
   phases: Phase[],
   idx: number,
@@ -440,15 +442,26 @@ function computeRemainingTotalWithPreWork(
   preWorkSec: number,
   preWorkCountdown: number
 ): number {
-  let total = remainingSec + Math.max(0, preWorkSec);
+  // Basis: aktuelle Restzeit + alle zukünftigen Phasen
+  let total = computeRemainingTotal(phases, idx, remainingSec);
 
-  for (let i = idx + 1; i < phases.length; i++) {
-    total += phases[i].durationSec;
-    if (preWorkCountdown > 0 && phases[i].type === "WORK") total += preWorkCountdown;
+  // aktueller Pre-Work Countdown (falls gerade 4..1 läuft)
+  total += Math.max(0, preWorkSec);
+
+  // Countdown vor allen zukünftigen WORK-Phasen
+  const cd = Math.max(0, preWorkCountdown);
+  if (cd > 0) {
+    let futureWorkCount = 0;
+    for (let i = idx + 1; i < phases.length; i++) {
+      if (phases[i].type === "WORK") futureWorkCount++;
+    }
+    total += cd * futureWorkCount;
   }
 
   return total;
 }
+/* ===== ENDE TEIL 2: computeRemainingTotalWithPreWork ===== */
+
 
 /* =========================
    Cards Storage (normalisiert)
@@ -1971,42 +1984,44 @@ function Runner({
     });
   }
 
-  function skip() {
-    setRunner((prev) => {
-      // wenn wir im Pre-Countdown sind -> Countdown skippen (Work startet sofort)
-      if (prev.preWorkSec > 0) {
-        return {
-          ...prev,
-          preWorkSec: 0,
-          totalRemainingSec: computeRemainingTotalWithPreWork(
-            phases,
-            prev.phaseIndex,
-            prev.remainingSec,
-            0,
-            PRE_WORK_COUNTDOWN
-          ),
-        };
-      }
-
-      const nextIndex = prev.phaseIndex + 1;
-      if (nextIndex >= phases.length) {
-        return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
-      }
-
-      const nextPhase = phases[nextIndex];
-      const nextRem = nextPhase.durationSec;
-      const nextPre = nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
-
+/* ===== ANFANG TEIL 3: Runner skip() ===== */
+function skip() {
+  setRunner((prev) => {
+    // Wenn wir im Pre-Countdown sind -> Countdown skippen (Work startet sofort)
+    if (prev.preWorkSec > 0) {
       return {
         ...prev,
-        status: "RUNNING",
-        phaseIndex: nextIndex,
-        remainingSec: nextRem,
-        preWorkSec: nextPre,
-        totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
+        preWorkSec: 0,
+        totalRemainingSec: computeRemainingTotalWithPreWork(
+          phases,
+          prev.phaseIndex,
+          prev.remainingSec,
+          0,
+          PRE_WORK_COUNTDOWN
+        ),
       };
-    });
-  }
+    }
+
+    const nextIndex = prev.phaseIndex + 1;
+    if (nextIndex >= phases.length) {
+      return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
+    }
+
+    const nextPhase = phases[nextIndex];
+    const nextRem = nextPhase.durationSec;
+    const nextPre = nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
+
+    return {
+      ...prev,
+      status: "RUNNING",
+      phaseIndex: nextIndex,
+      remainingSec: nextRem,
+      preWorkSec: nextPre,
+      totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
+    };
+  });
+}
+/* ===== ENDE TEIL 3: Runner skip() ===== */
 
   function stop() {
     setRunner({

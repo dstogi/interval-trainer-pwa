@@ -129,7 +129,6 @@ type RunnerState = {
   preWorkSec: number; // Countdown 4..1 vor WORK, 0 = aus
 };
 
-
 /* =========================
    Profiles + History Types
 ========================= */
@@ -433,6 +432,24 @@ function computeRemainingTotal(phases: Phase[], idx: number, remainingSec: numbe
   return total;
 }
 
+// Real remaining time inkl. Countdown vor jedem WORK
+function computeRemainingTotalWithPreWork(
+  phases: Phase[],
+  idx: number,
+  remainingSec: number,
+  preWorkSec: number,
+  preWorkCountdown: number
+): number {
+  let total = remainingSec + Math.max(0, preWorkSec);
+
+  for (let i = idx + 1; i < phases.length; i++) {
+    total += phases[i].durationSec;
+    if (preWorkCountdown > 0 && phases[i].type === "WORK") total += preWorkCountdown;
+  }
+
+  return total;
+}
+
 /* =========================
    Cards Storage (normalisiert)
 ========================= */
@@ -465,6 +482,14 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
   // TIME (alte Karten konnten ohne "kind" sein)
   if (raw.kind === "TIME" || (raw.timing && raw.exercise)) {
     const t = raw.timing ?? {};
+
+    const image =
+      typeof raw.exercise?.image === "string"
+        ? raw.exercise.image
+        : typeof raw.exercise?.imageUrl === "string"
+        ? raw.exercise.imageUrl
+        : undefined;
+
     return {
       kind: "TIME",
       id: typeof raw.id === "string" ? raw.id : makeId(),
@@ -472,17 +497,10 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
       exercise: {
-exercise: {
-  name: typeof raw.exercise?.name === "string" ? raw.exercise.name : "",
-  notes: typeof raw.exercise?.notes === "string" ? raw.exercise.notes : "",
-  image:
-    typeof raw.exercise?.image === "string"
-      ? raw.exercise.image
-      : typeof raw.exercise?.imageUrl === "string"
-      ? raw.exercise.imageUrl
-      : undefined,
-},
-
+        name: typeof raw.exercise?.name === "string" ? raw.exercise.name : "",
+        notes: typeof raw.exercise?.notes === "string" ? raw.exercise.notes : "",
+        image: typeof image === "string" && image.trim() ? image.trim() : undefined,
+      },
       timing: {
         warmupSec: Number(t.warmupSec) || 0,
         workSec: Number(t.workSec) || 20,
@@ -663,7 +681,7 @@ function makeSampleCard(): TimeCard {
     kind: "TIME",
     id: makeId(),
     title: "HIIT Kurz",
-    exercise: { name: "Liegestütze", notes: "" },
+    exercise: { name: "Liegestütze", notes: "", image: undefined },
     timing: {
       warmupSec: 0,
       workSec: 20,
@@ -689,7 +707,7 @@ function makeRandomCard(): TimeCard {
     kind: "TIME",
     id: makeId(),
     title: `Zufall – ${name}`,
-    exercise: { name, notes: "" },
+    exercise: { name, notes: "", image: undefined },
     timing: {
       warmupSec: 0,
       workSec: work,
@@ -851,7 +869,6 @@ function initProfilesState(): { profiles: Profile[]; activeId: string } {
 }
 
 export default function App() {
-  // profiles init in one go (damit kein doppeltes Default-Profil entsteht)
   const [profileInit] = useState(() => initProfilesState());
   const [profiles, setProfiles] = useState<Profile[]>(profileInit.profiles);
   const [activeProfileId, setActiveProfileId] = useState<string>(profileInit.activeId);
@@ -1030,7 +1047,6 @@ export default function App() {
   }
 
   function importCard(card: IntervalCard): { ok: boolean; message: string } {
-    // avoid overwriting existing cards
     let next = card;
 
     if (cards.some((c) => c.id === card.id)) {
@@ -1147,7 +1163,10 @@ export default function App() {
                 return (
                   <div key={card.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
                     <div style={{ fontWeight: 800 }}>{card.title}</div>
-                    <div style={{ fontSize: 14, opacity: 0.8 }}>Übung: {card.exercise.name || "—"}</div>
+                    <div style={{ fontSize: 14, opacity: 0.8 }}>
+                      Übung: {card.exercise.name || "—"}
+                      {card.exercise.image ? <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.9 }}>🖼️</span> : null}
+                    </div>
 
                     <div style={{ fontSize: 13, marginTop: 6, opacity: 0.9 }}>
                       {card.timing.sets} Sätze · {card.timing.repsPerSet} Wdh/Satz · Arbeit {formatMMSS(card.timing.workSec)}
@@ -1257,8 +1276,9 @@ export default function App() {
           })()}
 
         {/* RUN */}
-        {screen.name === "RUN" && activeCard && (
-          isRepCard(activeCard) ? (
+        {screen.name === "RUN" &&
+          activeCard &&
+          (isRepCard(activeCard) ? (
             <RepRunner
               card={activeCard}
               profileId={activeProfileId}
@@ -1276,8 +1296,7 @@ export default function App() {
               onSaveLog={addHistoryEntry}
               onBack={() => setScreen({ name: "HOME" })}
             />
-          )
-        )}
+          ))}
       </div>
     </div>
   );
@@ -1340,7 +1359,6 @@ function Editor({
   async function fileToResizedDataURL(file: File, maxSide = 1200, quality = 0.85): Promise<string> {
     const dataUrl = await readFileAsDataURL(file);
 
-    // Wenn es kein Bild ist -> einfach so speichern
     if (!dataUrl.startsWith("data:image/")) return dataUrl;
 
     try {
@@ -1363,7 +1381,6 @@ function Editor({
 
       ctx.drawImage(img, 0, 0, cw, ch);
 
-      // JPEG macht i.d.R. kleinere Daten als PNG
       return canvas.toDataURL("image/jpeg", quality);
     } catch {
       return dataUrl;
@@ -1373,7 +1390,6 @@ function Editor({
   async function onPickImageFile(file: File | null) {
     if (!file) return;
 
-    // grobe Warnung bei sehr großen Dateien
     if (file.size > 2_000_000) {
       const ok = window.confirm(
         `Das Bild ist ${(file.size / 1024 / 1024).toFixed(1)} MB groß. ` +
@@ -1385,7 +1401,7 @@ function Editor({
     try {
       const resized = await fileToResizedDataURL(file);
       setImage(resized);
-      setImageUrlInput(""); // URL-Feld leeren, weil wir jetzt DataURL nutzen
+      setImageUrlInput("");
     } catch {
       window.alert("Bild konnte nicht geladen werden.");
     }
@@ -1397,7 +1413,6 @@ function Editor({
     setImage(trimmed);
   }
 
-  // ---------- Save ----------
   function save() {
     setError("");
 
@@ -1483,7 +1498,6 @@ function Editor({
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
               void onPickImageFile(f);
-              // damit derselbe File nochmal gewählt werden kann:
               e.currentTarget.value = "";
             }}
           />
@@ -1688,7 +1702,7 @@ function RepEditor({
           </div>
         ))}
       </div>
-            
+
       <div style={{ fontSize: 13, opacity: 0.85 }}>
         Gesamt: <b>{totalReps}</b> Wdh · <b>{totalKg.toFixed(1)}</b> kg bewegt (Zusatzgewicht)
       </div>
@@ -1781,13 +1795,19 @@ function Runner({
   const PRE_WORK_COUNTDOWN = 4; // 4..3..2..1
 
   const phases = useMemo(() => buildPhases(card), [card]);
-  const total = useMemo(() => totalSessionSec(phases), [phases]);
+  const totalPlanned = useMemo(() => totalSessionSec(phases), [phases]);
+
+  const workCount = useMemo(() => phases.filter((p) => p.type === "WORK").length, [phases]);
+  const totalWithCountdown = useMemo(
+    () => totalPlanned + PRE_WORK_COUNTDOWN * workCount,
+    [totalPlanned, workCount]
+  );
 
   const [runner, setRunner] = useState<RunnerState>(() => ({
     status: "IDLE",
     phaseIndex: 0,
     remainingSec: phases[0]?.durationSec ?? 0,
-    totalRemainingSec: total,
+    totalRemainingSec: totalWithCountdown,
     preWorkSec: 0,
   }));
 
@@ -1812,10 +1832,10 @@ function Runner({
       status: "IDLE",
       phaseIndex: 0,
       remainingSec: phases[0]?.durationSec ?? 0,
-      totalRemainingSec: total,
+      totalRemainingSec: totalWithCountdown,
       preWorkSec: 0,
     });
-  }, [card.id, total, phases]);
+  }, [card.id, totalWithCountdown, phases]);
 
   // Tick
   useEffect(() => {
@@ -1825,10 +1845,20 @@ function Runner({
       setRunner((prev) => {
         if (prev.status !== "RUNNING") return prev;
 
-        // 1) Pre-Work Countdown läuft -> Work Timer noch NICHT runterzählen
+        // 1) Pre-Work Countdown läuft
         if (prev.preWorkSec > 0) {
           const nextPre = Math.max(0, prev.preWorkSec - 1);
-          return { ...prev, preWorkSec: nextPre };
+          return {
+            ...prev,
+            preWorkSec: nextPre,
+            totalRemainingSec: computeRemainingTotalWithPreWork(
+              phases,
+              prev.phaseIndex,
+              prev.remainingSec,
+              nextPre,
+              PRE_WORK_COUNTDOWN
+            ),
+          };
         }
 
         // 2) normaler Timer
@@ -1837,7 +1867,13 @@ function Runner({
           return {
             ...prev,
             remainingSec: nextRem,
-            totalRemainingSec: computeRemainingTotal(phases, prev.phaseIndex, nextRem),
+            totalRemainingSec: computeRemainingTotalWithPreWork(
+              phases,
+              prev.phaseIndex,
+              nextRem,
+              0,
+              PRE_WORK_COUNTDOWN
+            ),
           };
         }
 
@@ -1849,16 +1885,15 @@ function Runner({
 
         const nextPhase = phases[nextIndex];
         const nextRem = nextPhase.durationSec;
-
-        // Wenn die nächste Phase WORK ist -> Countdown starten
         const nextPre = nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
 
         return {
           ...prev,
+          status: "RUNNING",
           phaseIndex: nextIndex,
           remainingSec: nextRem,
-          totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem),
           preWorkSec: nextPre,
+          totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
         };
       });
     }, 1000);
@@ -1868,7 +1903,7 @@ function Runner({
 
   const phase = phases[runner.phaseIndex] ?? phases[0];
 
-  // Beep/Vibration beim Phasenwechsel (wie bisher)
+  // Phase-Wechsel Beep/Vibration
   const lastPhaseRef = useRef<number>(-1);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
@@ -1879,7 +1914,7 @@ function Runner({
     if (prefs.vibration && "vibrate" in navigator) navigator.vibrate([80, 40, 80]);
   }, [runner.phaseIndex, runner.status, prefs.sound, prefs.vibration]);
 
-  // Beep im Pre-Work Countdown (4..1) + "GO" bei 0
+  // Pre-Work Countdown Beeps (4..1) + GO
   const prevPreRef = useRef<number>(0);
   useEffect(() => {
     const prev = prevPreRef.current;
@@ -1888,24 +1923,22 @@ function Runner({
     if (runner.status !== "RUNNING") return;
 
     if (runner.preWorkSec > 0) {
-      // leiser kurzer Beep pro Zahl
       if (prefs.sound) beepOnce(660, 70, 0.12);
       return;
     }
 
-    // wenn 1 -> 0: "GO"
     if (prev === 1 && runner.preWorkSec === 0) {
       if (prefs.sound) beepOnce(990, 110, 0.18);
       if (prefs.vibration && "vibrate" in navigator) navigator.vibrate([90]);
     }
   }, [runner.preWorkSec, runner.status, prefs.sound, prefs.vibration]);
 
-  // kleiner 3-2-1 Beep am Ende der Phase (dein bestehendes Feature)
+  // 3-2-1 Beeps am Ende der Phase (wenn aktiviert)
   const lastCountdownRef = useRef<number | null>(null);
   useEffect(() => {
     if (runner.status !== "RUNNING") return;
     if (!prefs.countdownBeeps) return;
-    if (runner.preWorkSec > 0) return; // während PreCount nicht doppelt piepsen
+    if (runner.preWorkSec > 0) return;
 
     if (runner.remainingSec <= 3 && runner.remainingSec >= 1) {
       if (lastCountdownRef.current !== runner.remainingSec) {
@@ -1922,14 +1955,14 @@ function Runner({
       if (prev.status === "IDLE" || prev.status === "FINISHED") {
         const idx = 0;
         const rem = phases[0]?.durationSec ?? 0;
+        const firstPre = phases[0]?.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
 
-        const firstIsWork = phases[0]?.type === "WORK";
         return {
           status: "RUNNING",
           phaseIndex: idx,
           remainingSec: rem,
-          totalRemainingSec: computeRemainingTotal(phases, idx, rem),
-          preWorkSec: firstIsWork ? PRE_WORK_COUNTDOWN : 0,
+          preWorkSec: firstPre,
+          totalRemainingSec: computeRemainingTotalWithPreWork(phases, idx, rem, firstPre, PRE_WORK_COUNTDOWN),
         };
       }
       if (prev.status === "RUNNING") return { ...prev, status: "PAUSED" };
@@ -1942,21 +1975,35 @@ function Runner({
     setRunner((prev) => {
       // wenn wir im Pre-Countdown sind -> Countdown skippen (Work startet sofort)
       if (prev.preWorkSec > 0) {
-        return { ...prev, preWorkSec: 0 };
+        return {
+          ...prev,
+          preWorkSec: 0,
+          totalRemainingSec: computeRemainingTotalWithPreWork(
+            phases,
+            prev.phaseIndex,
+            prev.remainingSec,
+            0,
+            PRE_WORK_COUNTDOWN
+          ),
+        };
       }
 
       const nextIndex = prev.phaseIndex + 1;
-      if (nextIndex >= phases.length) return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
+      if (nextIndex >= phases.length) {
+        return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
+      }
 
       const nextPhase = phases[nextIndex];
       const nextRem = nextPhase.durationSec;
+      const nextPre = nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
+
       return {
         ...prev,
         status: "RUNNING",
         phaseIndex: nextIndex,
         remainingSec: nextRem,
-        totalRemainingSec: computeRemainingTotal(phases, nextIndex, nextRem),
-        preWorkSec: nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0,
+        preWorkSec: nextPre,
+        totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
       };
     });
   }
@@ -1966,7 +2013,7 @@ function Runner({
       status: "IDLE",
       phaseIndex: 0,
       remainingSec: phases[0]?.durationSec ?? 0,
-      totalRemainingSec: total,
+      totalRemainingSec: totalWithCountdown,
       preWorkSec: 0,
     });
   }
@@ -1974,15 +2021,14 @@ function Runner({
   function saveToHistory() {
     if (saved) return;
     if (!profileId) return;
-    const entry = makeTimeLogEntry(profileId, card, total);
+    const entry = makeTimeLogEntry(profileId, card, totalPlanned);
     onSaveLog(entry);
     setSaved(true);
   }
 
-  const showPreWork = runner.status === "RUNNING" && phase?.type === "WORK" && runner.preWorkSec > 0;
+  const showPreWork = phase?.type === "WORK" && runner.preWorkSec > 0 && runner.status !== "FINISHED";
 
-  // Farben (ohne CSS-Abhängigkeit)
-  const tone =
+  const tone: FocusTone =
     runner.status === "PAUSED"
       ? "paused"
       : runner.status === "FINISHED"
@@ -1995,43 +2041,29 @@ function Runner({
       ? "warmup"
       : "cooldown";
 
-  const toneBg =
-    tone === "work"
-      ? "#0a7a4a"
-      : tone === "rest"
-      ? "#202124"
-      : tone === "warmup"
-      ? "#0b3a6d"
-      : tone === "cooldown"
-      ? "#0b3a6d"
-      : tone === "paused"
-      ? "#3a3a3a"
-      : "#135d2e";
+  const toneBg = toneToBg(tone);
 
-  const bgStyle: any =
-    card.exercise.image
-      ? {
-          backgroundColor: toneBg,
-          backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-        }
-      : { backgroundColor: toneBg };
+  const bgStyle: any = card.exercise.image
+    ? {
+        backgroundColor: toneBg,
+        backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }
+    : { backgroundColor: toneBg };
 
-  const workBgStyle: any =
-    card.exercise.image
-      ? {
-          backgroundColor: "#0a7a4a",
-          backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-        }
-      : { backgroundColor: "#0a7a4a" };
+  const workBgStyle: any = card.exercise.image
+    ? {
+        backgroundColor: "#0a7a4a",
+        backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }
+    : { backgroundColor: "#0a7a4a" };
 
-  const phaseProgress =
-    phase?.durationSec > 0 ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec)) : 0;
+  const phaseProgress = phase?.durationSec > 0 ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec)) : 0;
   const preProgress =
     PRE_WORK_COUNTDOWN > 0 ? Math.max(0, Math.min(1, 1 - runner.preWorkSec / PRE_WORK_COUNTDOWN)) : 0;
   const progress = showPreWork ? preProgress : phaseProgress;
@@ -2040,7 +2072,6 @@ function Runner({
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&
     typeof (document as any)?.exitFullscreen === "function";
 
-  // ---------- BIG VIEW ----------
   if (bigView) {
     const overlayStyle: any = {
       position: "fixed",
@@ -2075,7 +2106,7 @@ function Runner({
     };
 
     return (
-      <div className={`focus-overlay ${tone}`} style={{ ...overlayStyle, position: "fixed" }}>
+      <div style={overlayStyle}>
         {/* Top Bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button style={btnSmall} onClick={onBack}>
@@ -2102,14 +2133,37 @@ function Runner({
         </div>
 
         {/* Progress */}
-        <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 12 }}>
+        <div
+          style={{
+            height: 6,
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.25)",
+            overflow: "hidden",
+            marginTop: 12,
+          }}
+        >
           <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
         </div>
 
         {/* Main */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 10 }}>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
           <div style={{ fontSize: "clamp(18px, 4vw, 48px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
-            {runner.status === "IDLE" ? "Bereit" : runner.status === "PAUSED" ? "Pausiert" : runner.status === "FINISHED" ? "Fertig" : phase.label}
+            {runner.status === "IDLE"
+              ? "Bereit"
+              : runner.status === "PAUSED"
+              ? "Pausiert"
+              : runner.status === "FINISHED"
+              ? "Fertig"
+              : phase.label}
           </div>
 
           <div style={{ fontSize: "clamp(72px, 18vw, 210px)", fontWeight: 900, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
@@ -2129,7 +2183,7 @@ function Runner({
           </div>
 
           <div style={{ fontSize: 13, opacity: 0.9 }}>
-            Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(total)}
+            Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(totalPlanned)}
           </div>
         </div>
 
@@ -2159,7 +2213,17 @@ function Runner({
         </div>
 
         {/* Bottom */}
-        <div style={{ fontSize: 12, opacity: 0.9, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+        <div
+          style={{
+            fontSize: 12,
+            opacity: 0.9,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            marginTop: 12,
+          }}
+        >
           <div>
             Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1 {prefs.countdownBeeps ? "✅" : "❌"}
           </div>
@@ -2221,7 +2285,7 @@ function Runner({
     );
   }
 
-  // ---------- NORMAL VIEW ----------
+  // Normal View
   return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2259,7 +2323,7 @@ function Runner({
         </div>
 
         <div style={{ marginTop: 6, fontSize: 13, opacity: 0.95 }}>
-          Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(total)}
+          Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(totalPlanned)}
         </div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
@@ -2275,7 +2339,11 @@ function Runner({
 
       <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={prefs.sound} onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={prefs.sound}
+            onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })}
+          />
           Sound
         </label>
 
@@ -2366,7 +2434,6 @@ function Runner({
   );
 }
 
-
 /* =========================
    REPS Runner
 ========================= */
@@ -2409,12 +2476,14 @@ function RepRunner({
 
   useEffect(() => {
     if (!running) return;
+
     const id = window.setInterval(() => {
       setT((prev) => {
         if (stage === "REST") return Math.max(0, prev - 1);
         return prev + 1;
       });
     }, 1000);
+
     return () => window.clearInterval(id);
   }, [running, stage]);
 
@@ -2487,7 +2556,7 @@ function RepRunner({
   if (bigView) {
     const overlayStyle: any = {
       position: "fixed",
-      top: 0, left: 0, right: 0, bottom: 0,
+      inset: 0,
       zIndex: 9999,
       display: "flex",
       flexDirection: "column",
@@ -2518,7 +2587,7 @@ function RepRunner({
     };
 
     return (
-      <div className={`focus-overlay ${tone}`} style={overlayStyle}>
+      <div style={overlayStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button style={btnSmall} onClick={onBack}>←</button>
 
@@ -2540,7 +2609,7 @@ function RepRunner({
         </div>
 
         <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 12 }}>
-          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 10 }}>
@@ -2589,7 +2658,7 @@ function RepRunner({
     );
   }
 
-  // Normal View + Button zum Einschalten
+  // Normal View
   return (
     <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2629,7 +2698,7 @@ function RepRunner({
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
 
           <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
-            <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+            <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
           </div>
 
           {card.targetSetSec ? (
@@ -2649,7 +2718,7 @@ function RepRunner({
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
 
           <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
-            <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.85)" }} />
+            <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
           </div>
 
           <button onClick={() => setT(0)} style={{ marginTop: 12 }}>
@@ -2839,7 +2908,7 @@ function HistoryView({
     bestKgAt: number;
     bestReps: number;
     bestRepsAt: number;
-    bestAvgKg: number; // kg pro Wdh (Ø)
+    bestAvgKg: number;
     bestAvgKgAt: number;
   };
 
@@ -3010,7 +3079,15 @@ function HistoryView({
       const profName = profileName(e.profileId);
 
       for (const b of br) {
-        rows.push([iso, local, profName, e.cardTitle, (b.exercise || "").trim(), Number(b.reps) || 0, (Number(b.kg) || 0).toFixed(1)]);
+        rows.push([
+          iso,
+          local,
+          profName,
+          e.cardTitle,
+          (b.exercise || "").trim(),
+          Number(b.reps) || 0,
+          (Number(b.kg) || 0).toFixed(1),
+        ]);
       }
     }
 
@@ -3170,7 +3247,6 @@ function RankingView({
       return { ...s, profileName: p.name };
     });
 
-    // Rank by kg moved (then reps, then time, then sessions)
     return list.sort(
       (a, b) => b.totalKg - a.totalKg || b.totalReps - a.totalReps || b.timePlannedSec - a.timePlannedSec || b.sessions - a.sessions
     );
@@ -3248,7 +3324,7 @@ function ImportView({
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder='JSON hier einfügen…'
+        placeholder="JSON hier einfügen…"
         rows={10}
         style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
       />
@@ -3300,7 +3376,6 @@ function useBigViewPref() {
 }
 
 // Bildschirm wach halten (wenn Browser es kann)
-// Hinweis: Funktioniert meist in Chrome/Edge (Android/Desktop). iOS kann eingeschränkt sein.
 function useWakeLock(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;

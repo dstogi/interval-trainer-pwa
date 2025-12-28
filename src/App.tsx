@@ -27,15 +27,25 @@ type Exercise = {
 
 type CardKind = "TIME" | "REPS";
 
+/* ===== ANFANG TEIL 1/5: TimeCard (mit setExercises) ===== */
 type TimeCard = {
   kind: "TIME";
   id: string;
   title: string;
   createdAt: number;
   updatedAt: number;
+
+  // Standard-Übung (Fallback)
   exercise: Exercise;
+
+  // OPTIONAL: pro Satz eigene Übung + Bild (Länge = timing.sets)
+  // Wird im Runner bei "ARBEIT" & beim 4-3-2-1 Countdown verwendet.
+  setExercises?: Exercise[];
+
   timing: TimingConfig;
 };
+/* ===== ENDE TEIL 1/5: TimeCard (mit setExercises) ===== */
+
 
 type RepSet = {
   id: string;
@@ -434,7 +444,7 @@ function computeRemainingTotal(phases: Phase[], idx: number, remainingSec: numbe
 }
 /* ===== ENDE TEIL 1: computeRemainingTotal ===== */
 
-/* ===== ANFANG TEIL 2: computeRemainingTotalWithPreWork ===== */
+/* ===== ANFANG TEIL 5/5: computeRemainingTotalWithPreWork (nutzt computeRemainingTotal) ===== */
 function computeRemainingTotalWithPreWork(
   phases: Phase[],
   idx: number,
@@ -460,13 +470,10 @@ function computeRemainingTotalWithPreWork(
 
   return total;
 }
-/* ===== ENDE TEIL 2: computeRemainingTotalWithPreWork ===== */
+/* ===== ENDE TEIL 5/5: computeRemainingTotalWithPreWork (nutzt computeRemainingTotal) ===== */
 
 
-/* =========================
-   Cards Storage (normalisiert)
-========================= */
-
+/* ===== ANFANG TEIL 2/5: normalizeLoadedCard (mit setExercises) ===== */
 function normalizeLoadedCard(raw: any): IntervalCard | null {
   if (!raw || typeof raw !== "object") return null;
 
@@ -496,12 +503,36 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
   if (raw.kind === "TIME" || (raw.timing && raw.exercise)) {
     const t = raw.timing ?? {};
 
-    const image =
+    const baseImage =
       typeof raw.exercise?.image === "string"
         ? raw.exercise.image
         : typeof raw.exercise?.imageUrl === "string"
         ? raw.exercise.imageUrl
         : undefined;
+
+    const setsCount = clampInt(Number(t.sets) || 4, 1, 99);
+
+    // OPTIONAL: pro Satz Exercises
+    const setRaw = Array.isArray(raw.setExercises) ? raw.setExercises : [];
+    const parsedSetExercises: Exercise[] = setRaw
+      .filter((x: any) => x && typeof x === "object")
+      .map((x: any) => {
+        const img =
+          typeof x?.image === "string" ? x.image : typeof x?.imageUrl === "string" ? x.imageUrl : undefined;
+
+        return {
+          name: typeof x?.name === "string" ? x.name : "",
+          notes: typeof x?.notes === "string" ? x.notes : "",
+          image: typeof img === "string" && img.trim() ? img.trim() : undefined,
+        };
+      });
+
+    let normalizedSetExercises: Exercise[] | undefined = undefined;
+    if (parsedSetExercises.length) {
+      const copy = parsedSetExercises.slice(0, setsCount);
+      while (copy.length < setsCount) copy.push({ name: "", notes: "", image: undefined });
+      normalizedSetExercises = copy;
+    }
 
     return {
       kind: "TIME",
@@ -512,15 +543,16 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
       exercise: {
         name: typeof raw.exercise?.name === "string" ? raw.exercise.name : "",
         notes: typeof raw.exercise?.notes === "string" ? raw.exercise.notes : "",
-        image: typeof image === "string" && image.trim() ? image.trim() : undefined,
+        image: typeof baseImage === "string" && baseImage.trim() ? baseImage.trim() : undefined,
       },
+      setExercises: normalizedSetExercises,
       timing: {
         warmupSec: Number(t.warmupSec) || 0,
         workSec: Number(t.workSec) || 20,
         restBetweenRepsSec: Number(t.restBetweenRepsSec) || 0,
         repsPerSet: clampInt(Number(t.repsPerSet) || 1, 1, 99),
         restBetweenSetsSec: Number(t.restBetweenSetsSec) || 60,
-        sets: clampInt(Number(t.sets) || 4, 1, 99),
+        sets: setsCount,
         cooldownSec: Number(t.cooldownSec) || 0,
       },
     };
@@ -528,6 +560,8 @@ function normalizeLoadedCard(raw: any): IntervalCard | null {
 
   return null;
 }
+/* ===== ENDE TEIL 2/5: normalizeLoadedCard (mit setExercises) ===== */
+
 
 function loadCards(): IntervalCard[] {
   try {
@@ -1315,10 +1349,7 @@ export default function App() {
   );
 }
 
-/* =========================
-   TIME Editor
-========================= */
-
+/* ===== ANFANG TEIL 3/5: TIME Editor (pro Satz Übung + Bild) ===== */
 function Editor({
   initial,
   onCancel,
@@ -1332,7 +1363,7 @@ function Editor({
   const [exercise, setExercise] = useState(initial?.exercise.name ?? "");
   const [notes, setNotes] = useState(initial?.exercise.notes ?? "");
 
-  // Bild: entweder Data-URL (Upload) oder URL
+  // Standard-Bild: entweder Data-URL (Upload) oder URL
   const [image, setImage] = useState<string>(initial?.exercise.image ?? "");
   const [imageUrlInput, setImageUrlInput] = useState<string>(() => {
     const v = initial?.exercise.image ?? "";
@@ -1348,6 +1379,65 @@ function Editor({
   const [cooldown, setCooldown] = useState(formatMMSS(initial?.timing.cooldownSec ?? 0));
 
   const [error, setError] = useState<string>("");
+
+  // --- NEU: pro Satz eigene Übung + Bild ---
+  const [usePerSetExercises, setUsePerSetExercises] = useState<boolean>(() => {
+    return Array.isArray(initial?.setExercises) && (initial?.setExercises?.length ?? 0) > 0;
+  });
+
+  const [setExercises, setSetExercises] = useState<Exercise[]>(() => {
+    const n = clampInt(initial?.timing.sets ?? 4, 1, 99);
+    const raw = Array.isArray(initial?.setExercises) ? (initial!.setExercises as Exercise[]) : [];
+    const copy = raw.slice(0, n);
+    while (copy.length < n) copy.push({ name: "", notes: "", image: undefined });
+
+    // In State erlauben wir leere Strings (später sauber trimmen)
+    return copy.map((e) => ({
+      name: typeof e?.name === "string" ? e.name : "",
+      notes: typeof e?.notes === "string" ? e.notes : "",
+      image: typeof e?.image === "string" ? e.image : "",
+    }));
+  });
+
+  const [setImageUrlInputs, setSetImageUrlInputs] = useState<string[]>(() => {
+    const n = clampInt(initial?.timing.sets ?? 4, 1, 99);
+    const raw = Array.isArray(initial?.setExercises) ? (initial!.setExercises as Exercise[]) : [];
+    const urls = raw.slice(0, n).map((e) => {
+      const v = typeof e?.image === "string" ? e.image : "";
+      return v && !v.startsWith("data:") ? v : "";
+    });
+    while (urls.length < n) urls.push("");
+    return urls;
+  });
+
+  // wenn Anzahl Sätze geändert wird: Arrays anpassen
+  useEffect(() => {
+    const n = clampInt(sets, 1, 99);
+
+    setSetExercises((prev) => {
+      const next = prev.slice(0, n);
+      while (next.length < n) next.push({ name: "", notes: "", image: "" });
+      return next;
+    });
+
+    setSetImageUrlInputs((prev) => {
+      const next = prev.slice(0, n);
+      while (next.length < n) next.push("");
+      return next;
+    });
+  }, [sets]);
+
+  function updateSetExercise(idx: number, patch: Partial<Exercise>) {
+    setSetExercises((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  }
+
+  function updateSetUrl(idx: number, value: string) {
+    setSetImageUrlInputs((prev) => {
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+  }
 
   // ---------- Image Helpers (lokal) ----------
   function readFileAsDataURL(file: File): Promise<string> {
@@ -1400,16 +1490,18 @@ function Editor({
     }
   }
 
+  async function confirmLargeImage(file: File): Promise<boolean> {
+    if (file.size <= 2_000_000) return true;
+    return window.confirm(
+      `Das Bild ist ${(file.size / 1024 / 1024).toFixed(1)} MB groß. ` +
+        `Mehrere Bilder können localStorage sprengen. Trotzdem benutzen?`
+    );
+  }
+
   async function onPickImageFile(file: File | null) {
     if (!file) return;
-
-    if (file.size > 2_000_000) {
-      const ok = window.confirm(
-        `Das Bild ist ${(file.size / 1024 / 1024).toFixed(1)} MB groß. ` +
-          `Große Bilder können localStorage sprengen. Trotzdem benutzen?`
-      );
-      if (!ok) return;
-    }
+    const ok = await confirmLargeImage(file);
+    if (!ok) return;
 
     try {
       const resized = await fileToResizedDataURL(file);
@@ -1420,10 +1512,53 @@ function Editor({
     }
   }
 
+  async function onPickSetImageFile(idx: number, file: File | null) {
+    if (!file) return;
+    const ok = await confirmLargeImage(file);
+    if (!ok) return;
+
+    try {
+      const resized = await fileToResizedDataURL(file);
+      updateSetExercise(idx, { image: resized });
+      updateSetUrl(idx, "");
+    } catch {
+      window.alert("Bild konnte nicht geladen werden.");
+    }
+  }
+
   function applyImageUrl(url: string) {
     const trimmed = url.trim();
     setImageUrlInput(trimmed);
     setImage(trimmed);
+  }
+
+  function applySetImageUrl(idx: number, url: string) {
+    const trimmed = (url || "").trim();
+    updateSetUrl(idx, trimmed);
+    updateSetExercise(idx, { image: trimmed });
+  }
+
+  function removeSetImage(idx: number) {
+    updateSetExercise(idx, { image: "" });
+    updateSetUrl(idx, "");
+  }
+
+  function fillSetsFromSingle() {
+    const n = clampInt(sets, 1, 99);
+    const baseName = (exercise || "").trim();
+    const baseImg = (image || "").trim();
+
+    setSetExercises(
+      Array.from({ length: n }, () => ({
+        name: baseName,
+        notes: "",
+        image: baseImg,
+      }))
+    );
+
+    setSetImageUrlInputs(
+      Array.from({ length: n }, () => (baseImg && !baseImg.startsWith("data:") ? baseImg : ""))
+    );
   }
 
   function save() {
@@ -1443,14 +1578,47 @@ function Editor({
       setError("Bitte einen Titel eingeben.");
       return;
     }
-    if (!exercise.trim()) {
-      setError("Bitte eine Übung eingeben (z.B. Liegestütze).");
-      return;
-    }
     if (timing.workSec <= 0) {
       setError("Arbeitszeit muss > 0 sein.");
       return;
     }
+
+    const baseName = (exercise || "").trim();
+
+    // Validierung:
+    if (!usePerSetExercises) {
+      if (!baseName) {
+        setError("Bitte eine Übung eingeben (z.B. Liegestütze).");
+        return;
+      }
+    } else {
+      // wenn keine Standard-Übung -> pro Satz muss Name gesetzt sein
+      if (!baseName) {
+        const missing = setExercises.slice(0, timing.sets).findIndex((e) => !String(e?.name ?? "").trim());
+        if (missing >= 0) {
+          setError(`Bitte Übung für Satz ${missing + 1} eingeben (oder oben eine Standard‑Übung als Fallback).`);
+          return;
+        }
+      }
+    }
+
+    const cleanedSetExercises = usePerSetExercises
+      ? setExercises.slice(0, timing.sets).map((e) => {
+          const n = String(e?.name ?? "").trim();
+          const img = typeof e?.image === "string" ? e.image.trim() : "";
+          return {
+            name: n,
+            notes: "",
+            image: img ? img : undefined,
+          };
+        })
+      : undefined;
+
+    const hasAnySetData = cleanedSetExercises ? cleanedSetExercises.some((e) => e.name || e.image) : false;
+    const finalSetExercises = usePerSetExercises && hasAnySetData ? cleanedSetExercises : undefined;
+
+    // Fallback Name: wenn base leer, nimm Satz 1
+    const fallbackName = baseName || (finalSetExercises?.[0]?.name ?? "").trim() || "";
 
     const now = Date.now();
     const saved: TimeCard = {
@@ -1458,10 +1626,11 @@ function Editor({
       id: initial?.id ?? makeId(),
       title: title.trim(),
       exercise: {
-        name: exercise.trim(),
+        name: fallbackName,
         notes: notes.trim(),
         image: image.trim() ? image.trim() : undefined,
       },
+      setExercises: finalSetExercises,
       timing,
       createdAt: initial?.createdAt ?? now,
       updatedAt: now,
@@ -1486,8 +1655,13 @@ function Editor({
       </label>
 
       <label style={{ display: "block", marginBottom: 8 }}>
-        Übung (z.B. Liegestütze)
-        <input style={{ width: "100%" }} value={exercise} onChange={(e) => setExercise(e.target.value)} />
+        Übung (Standard / Fallback)
+        <input
+          style={{ width: "100%" }}
+          value={exercise}
+          onChange={(e) => setExercise(e.target.value)}
+          placeholder="z.B. Zirkel / oder eine Standard‑Übung"
+        />
       </label>
 
       <label style={{ display: "block", marginBottom: 8 }}>
@@ -1495,13 +1669,13 @@ function Editor({
         <input style={{ width: "100%" }} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </label>
 
-      {/* Bildblock */}
+      {/* Standard-Bild */}
       <div style={{ border: "1px dashed #ccc", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-        <div style={{ fontWeight: 800 }}>Übungsbild (optional)</div>
+        <div style={{ fontWeight: 800 }}>Standard‑Bild (optional)</div>
         <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-          Wird im <b>Countdown 4‑3‑2‑1</b> und in der <b>Großanzeige</b> als Hintergrund eingeblendet.
+          Das Bild wird im Runner nur bei <b>ARBEIT</b> & im <b>4‑3‑2‑1</b> angezeigt.
           <br />
-          Tipp: eher kleines Bild nutzen (wird lokal gespeichert).
+          Wenn du unten „pro Satz“ aktivierst, werden Satz‑Bilder bevorzugt.
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
@@ -1547,13 +1721,14 @@ function Editor({
             <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vorschau:</div>
             <img
               src={image}
-              alt="Übungsbild"
+              alt="Standard‑Bild"
               style={{
                 width: "100%",
-                maxHeight: 240,
-                objectFit: "cover",
+                maxHeight: 200,
+                objectFit: "contain",
                 borderRadius: 12,
                 border: "1px solid #ddd",
+                background: "#f3f3f3",
               }}
             />
           </div>
@@ -1574,6 +1749,98 @@ function Editor({
         <div />
       </div>
 
+      {/* PRO SATZ */}
+      <div style={{ border: "1px dashed #ccc", borderRadius: 12, padding: 12, marginTop: 12 }}>
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 800 }}>
+          <input
+            type="checkbox"
+            checked={usePerSetExercises}
+            onChange={(e) => setUsePerSetExercises(e.target.checked)}
+          />
+          Pro Satz eigene Übung + Bild
+        </label>
+
+        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+          Damit kannst du z.B. bei <b>4 Sätzen</b> auch <b>4 verschiedene Übungen</b> + <b>4 Bilder</b> hinterlegen.
+          <br />
+          Im Runner wird das Bild nur bei <b>ARBEIT</b> & beim <b>4‑3‑2‑1</b> gezeigt (Infos liegen nicht im Bild).
+        </div>
+
+        {usePerSetExercises ? (
+          <>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={fillSetsFromSingle}>
+                Standard‑Übung → alle Sätze kopieren
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              {setExercises.slice(0, clampInt(sets, 1, 99)).map((ex, idx) => (
+                <div key={idx} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontWeight: 800 }}>Satz {idx + 1}</div>
+
+                  <input
+                    style={{ width: "100%", marginTop: 6 }}
+                    placeholder="Übung (z.B. Kniebeugen)"
+                    value={ex.name}
+                    onChange={(e) => updateSetExercise(idx, { name: e.target.value })}
+                  />
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        void onPickSetImageFile(idx, f);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+
+                    <button type="button" onClick={() => removeSetImage(idx)} disabled={!String(ex.image || "").trim()}>
+                      Bild entfernen
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>…oder Bild‑URL:</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <input
+                        style={{ flex: "1 1 260px" }}
+                        placeholder="https://…"
+                        value={setImageUrlInputs[idx] ?? ""}
+                        onChange={(e) => updateSetUrl(idx, e.target.value)}
+                      />
+                      <button type="button" onClick={() => applySetImageUrl(idx, setImageUrlInputs[idx] ?? "")}>
+                        URL übernehmen
+                      </button>
+                    </div>
+                  </div>
+
+                  {String(ex.image || "").trim() ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vorschau:</div>
+                      <img
+                        src={String(ex.image || "")}
+                        alt={`Satz ${idx + 1}`}
+                        style={{
+                          width: "100%",
+                          maxHeight: 200,
+                          objectFit: "contain",
+                          borderRadius: 12,
+                          border: "1px solid #ddd",
+                          background: "#f3f3f3",
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </div>
+
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <button onClick={save}>Speichern</button>
         <button onClick={onCancel}>Abbrechen</button>
@@ -1585,6 +1852,8 @@ function Editor({
     </div>
   );
 }
+/* ===== ENDE TEIL 3/5: TIME Editor (pro Satz Übung + Bild) ===== */
+
 
 /* =========================
    REPS Editor
@@ -1783,10 +2052,7 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
   );
 }
 
-/* =========================
-   TIME Runner
-========================= */
-
+/* ===== ANFANG TEIL 4/5: TIME Runner (Bild klein & nur bei ARBEIT/Countdown) ===== */
 function Runner({
   card,
   prefs,
@@ -1811,10 +2077,7 @@ function Runner({
   const totalPlanned = useMemo(() => totalSessionSec(phases), [phases]);
 
   const workCount = useMemo(() => phases.filter((p) => p.type === "WORK").length, [phases]);
-  const totalWithCountdown = useMemo(
-    () => totalPlanned + PRE_WORK_COUNTDOWN * workCount,
-    [totalPlanned, workCount]
-  );
+  const totalWithCountdown = useMemo(() => totalPlanned + PRE_WORK_COUNTDOWN * workCount, [totalPlanned, workCount]);
 
   const [runner, setRunner] = useState<RunnerState>(() => ({
     status: "IDLE",
@@ -1880,13 +2143,7 @@ function Runner({
           return {
             ...prev,
             remainingSec: nextRem,
-            totalRemainingSec: computeRemainingTotalWithPreWork(
-              phases,
-              prev.phaseIndex,
-              nextRem,
-              0,
-              PRE_WORK_COUNTDOWN
-            ),
+            totalRemainingSec: computeRemainingTotalWithPreWork(phases, prev.phaseIndex, nextRem, 0, PRE_WORK_COUNTDOWN),
           };
         }
 
@@ -1915,6 +2172,29 @@ function Runner({
   }, [runner.status, phases]);
 
   const phase = phases[runner.phaseIndex] ?? phases[0];
+
+  // --- NEU: Übung + Bild pro Satz auflösen (Fallback auf Standard-Übung) ---
+  function resolveExerciseForPhase(p: Phase): Exercise {
+    const base = card.exercise ?? { name: "", notes: "", image: undefined };
+    const list = Array.isArray(card.setExercises) ? card.setExercises : [];
+    const per = p?.set > 0 && p.set <= list.length ? list[p.set - 1] : undefined;
+
+    if (!per) return base;
+
+    const name = String(per.name ?? "").trim();
+    const notes = String(per.notes ?? "").trim();
+    const img = typeof per.image === "string" ? per.image.trim() : "";
+
+    return {
+      name: name || base.name,
+      notes: notes || base.notes,
+      image: img ? img : base.image,
+    };
+  }
+
+  const currentExercise = resolveExerciseForPhase(phase);
+  const currentName = (currentExercise.name || "").trim() || "—";
+  const currentImage = (currentExercise.image || "").trim();
 
   // Phase-Wechsel Beep/Vibration
   const lastPhaseRef = useRef<number>(-1);
@@ -1984,44 +2264,42 @@ function Runner({
     });
   }
 
-/* ===== ANFANG TEIL 3: Runner skip() ===== */
-function skip() {
-  setRunner((prev) => {
-    // Wenn wir im Pre-Countdown sind -> Countdown skippen (Work startet sofort)
-    if (prev.preWorkSec > 0) {
+  function skip() {
+    setRunner((prev) => {
+      // wenn wir im Pre-Countdown sind -> Countdown skippen (Work startet sofort)
+      if (prev.preWorkSec > 0) {
+        return {
+          ...prev,
+          preWorkSec: 0,
+          totalRemainingSec: computeRemainingTotalWithPreWork(
+            phases,
+            prev.phaseIndex,
+            prev.remainingSec,
+            0,
+            PRE_WORK_COUNTDOWN
+          ),
+        };
+      }
+
+      const nextIndex = prev.phaseIndex + 1;
+      if (nextIndex >= phases.length) {
+        return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
+      }
+
+      const nextPhase = phases[nextIndex];
+      const nextRem = nextPhase.durationSec;
+      const nextPre = nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
+
       return {
         ...prev,
-        preWorkSec: 0,
-        totalRemainingSec: computeRemainingTotalWithPreWork(
-          phases,
-          prev.phaseIndex,
-          prev.remainingSec,
-          0,
-          PRE_WORK_COUNTDOWN
-        ),
+        status: "RUNNING",
+        phaseIndex: nextIndex,
+        remainingSec: nextRem,
+        preWorkSec: nextPre,
+        totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
       };
-    }
-
-    const nextIndex = prev.phaseIndex + 1;
-    if (nextIndex >= phases.length) {
-      return { ...prev, status: "FINISHED", remainingSec: 0, totalRemainingSec: 0, preWorkSec: 0 };
-    }
-
-    const nextPhase = phases[nextIndex];
-    const nextRem = nextPhase.durationSec;
-    const nextPre = nextPhase.type === "WORK" ? PRE_WORK_COUNTDOWN : 0;
-
-    return {
-      ...prev,
-      status: "RUNNING",
-      phaseIndex: nextIndex,
-      remainingSec: nextRem,
-      preWorkSec: nextPre,
-      totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
-    };
-  });
-}
-/* ===== ENDE TEIL 3: Runner skip() ===== */
+    });
+  }
 
   function stop() {
     setRunner({
@@ -2058,27 +2336,16 @@ function skip() {
 
   const toneBg = toneToBg(tone);
 
-  const bgStyle: any = card.exercise.image
-    ? {
-        backgroundColor: toneBg,
-        backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-      }
-    : { backgroundColor: toneBg };
+  // Bild NICHT als Background, sondern separat anzeigen:
+  const bgStyle: any = { backgroundColor: toneBg };
+  const workBgStyle: any = { backgroundColor: toneToBg("work") };
 
-  const workBgStyle: any = card.exercise.image
-    ? {
-        backgroundColor: "#0a7a4a",
-        backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${card.exercise.image})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-      }
-    : { backgroundColor: "#0a7a4a" };
+  const isActive = runner.status === "RUNNING" || runner.status === "PAUSED";
+  const showWorkImage = isActive && phase.type === "WORK" && runner.preWorkSec === 0 && Boolean(currentImage);
+  const showCountdownImage = isActive && showPreWork && Boolean(currentImage);
 
-  const phaseProgress = phase?.durationSec > 0 ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec)) : 0;
+  const phaseProgress =
+    phase?.durationSec > 0 ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec)) : 0;
   const preProgress =
     PRE_WORK_COUNTDOWN > 0 ? Math.max(0, Math.min(1, 1 - runner.preWorkSec / PRE_WORK_COUNTDOWN)) : 0;
   const progress = showPreWork ? preProgress : phaseProgress;
@@ -2086,6 +2353,35 @@ function skip() {
   const fsSupported =
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&
     typeof (document as any)?.exitFullscreen === "function";
+
+  const imgStyleBig: any = {
+    width: "min(900px, 100%)",
+    maxHeight: "32vh",
+    objectFit: "contain",
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: "rgba(0,0,0,0.18)",
+  };
+
+  const imgStyleSmall: any = {
+    width: "100%",
+    maxHeight: 140,
+    objectFit: "contain",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: "rgba(0,0,0,0.18)",
+    marginTop: 10,
+  };
+
+  const imgStyleCountdown: any = {
+    width: "min(900px, 100%)",
+    maxHeight: "28vh",
+    objectFit: "contain",
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: "rgba(0,0,0,0.18)",
+    marginTop: 14,
+  };
 
   if (bigView) {
     const overlayStyle: any = {
@@ -2171,7 +2467,14 @@ function skip() {
             gap: 10,
           }}
         >
-          <div style={{ fontSize: "clamp(18px, 4vw, 48px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+          <div
+            style={{
+              fontSize: "clamp(18px, 4vw, 48px)",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              opacity: 0.95,
+            }}
+          >
             {runner.status === "IDLE"
               ? "Bereit"
               : runner.status === "PAUSED"
@@ -2181,13 +2484,23 @@ function skip() {
               : phase.label}
           </div>
 
-          <div style={{ fontSize: "clamp(72px, 18vw, 210px)", fontWeight: 900, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+          <div
+            style={{
+              fontSize: "clamp(72px, 18vw, 210px)",
+              fontWeight: 900,
+              lineHeight: 1,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {formatMMSS(runner.remainingSec)}
           </div>
 
           <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
-            {card.exercise.name}
+            {currentName}
           </div>
+
+          {/* Bild nur bei ARBEIT */}
+          {showWorkImage ? <img src={currentImage} alt="Übungsbild" style={{ ...imgStyleBig, marginTop: 12 }} /> : null}
 
           <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
             Profil: <b>{profileName}</b>
@@ -2240,7 +2553,8 @@ function skip() {
           }}
         >
           <div>
-            Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1 {prefs.countdownBeeps ? "✅" : "❌"}
+            Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1{" "}
+            {prefs.countdownBeeps ? "✅" : "❌"}
           </div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
@@ -2279,13 +2593,20 @@ function skip() {
               </button>
             </div>
 
-            <div style={{ fontSize: "clamp(18px, 4vw, 44px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+            <div
+              style={{
+                fontSize: "clamp(18px, 4vw, 44px)",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                opacity: 0.95,
+              }}
+            >
               NÄCHSTE: ARBEIT
             </div>
 
-            <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
-              {card.exercise.name}
-            </div>
+            <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>{currentName}</div>
+
+            {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
 
             <div style={{ fontSize: "clamp(140px, 28vw, 360px)", fontWeight: 900, lineHeight: 1, marginTop: 18 }}>
               {runner.preWorkSec}
@@ -2323,15 +2644,26 @@ function skip() {
 
       <div style={{ borderRadius: 16, padding: 12, color: "#fff", ...bgStyle }}>
         <div style={{ fontSize: 14, opacity: 0.95, fontWeight: 800 }}>{phase.label}</div>
-        <div style={{ fontSize: 26, fontWeight: 900, marginTop: 6 }}>{card.exercise.name}</div>
+        <div style={{ fontSize: 26, fontWeight: 900, marginTop: 6 }}>{currentName}</div>
 
         <div style={{ fontSize: 44, fontWeight: 900, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>
           {formatMMSS(runner.remainingSec)}
         </div>
 
-        <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
+        <div
+          style={{
+            height: 6,
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.25)",
+            overflow: "hidden",
+            marginTop: 10,
+          }}
+        >
           <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
         </div>
+
+        {/* Bild nur bei ARBEIT */}
+        {showWorkImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleSmall} /> : null}
 
         <div style={{ marginTop: 10, fontSize: 13, opacity: 0.95 }}>
           {phase.set > 0 ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}` : "—"}
@@ -2394,7 +2726,7 @@ function skip() {
         </div>
       )}
 
-      {/* PRE-WORK COUNTDOWN auch in Normalansicht (riesig) */}
+      {/* PRE-WORK COUNTDOWN auch in Normalansicht */}
       {showPreWork ? (
         <div
           style={{
@@ -2428,13 +2760,20 @@ function skip() {
             </button>
           </div>
 
-          <div style={{ fontSize: "clamp(18px, 4vw, 44px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+          <div
+            style={{
+              fontSize: "clamp(18px, 4vw, 44px)",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              opacity: 0.95,
+            }}
+          >
             NÄCHSTE: ARBEIT
           </div>
 
-          <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
-            {card.exercise.name}
-          </div>
+          <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>{currentName}</div>
+
+          {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
 
           <div style={{ fontSize: "clamp(140px, 28vw, 360px)", fontWeight: 900, lineHeight: 1, marginTop: 18 }}>
             {runner.preWorkSec}
@@ -2448,6 +2787,8 @@ function skip() {
     </div>
   );
 }
+/* ===== ENDE TEIL 4/5: TIME Runner (Bild klein & nur bei ARBEIT/Countdown) ===== */
+
 
 /* =========================
    REPS Runner

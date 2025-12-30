@@ -47,11 +47,13 @@ type TimeCard = {
 /* ===== ENDE TEIL 1/5: TimeCard (mit setExercises) ===== */
 
 
+/* ===== ANFANG TEIL 1/5: REPS Types (Bilder + Warmup/Cooldown) ===== */
 type RepSet = {
   id: string;
   exercise: string;
   reps: number;
   weightKg: number; // Zusatzgewicht pro Wiederholung (Körpergewicht wird nicht mitgerechnet)
+  image?: string; // optional: Data-URL (Upload) oder URL
 };
 
 type RepCard = {
@@ -61,10 +63,15 @@ type RepCard = {
   createdAt: number;
   updatedAt: number;
 
+  warmupSec: number;   // Countdown vor Satz 1
+  cooldownSec: number; // Countdown nach letztem Satz
+
   sets: RepSet[];
   restBetweenSetsSec: number; // Pause nach jedem Satz
   targetSetSec?: number; // optional Zielzeit pro Satz
 };
+/* ===== ENDE TEIL 1/5: REPS Types (Bilder + Warmup/Cooldown) ===== */
+
 
 type IntervalCard = TimeCard | RepCard;
 
@@ -477,27 +484,44 @@ function computeRemainingTotalWithPreWork(
 function normalizeLoadedCard(raw: any): IntervalCard | null {
   if (!raw || typeof raw !== "object") return null;
 
-  // REPS
-  if (raw.kind === "REPS") {
-    const setsRaw = Array.isArray(raw.sets) ? raw.sets : [];
-    const sets: RepSet[] = setsRaw.map((s: any) => ({
+ /* ===== ANFANG TEIL 2/5: normalizeLoadedCard – REPS Block ===== */
+// REPS
+if (raw.kind === "REPS") {
+  const setsRaw = Array.isArray(raw.sets) ? raw.sets : [];
+  const sets: RepSet[] = setsRaw.map((s: any) => {
+    const img =
+      typeof s?.image === "string"
+        ? s.image
+        : typeof s?.imageUrl === "string"
+        ? s.imageUrl
+        : undefined;
+
+    return {
       id: typeof s?.id === "string" ? s.id : makeId(),
       exercise: typeof s?.exercise === "string" ? s.exercise : "",
       reps: Number(s?.reps) || 0,
       weightKg: Number(s?.weightKg) || 0,
-    }));
-
-    return {
-      kind: "REPS",
-      id: typeof raw.id === "string" ? raw.id : makeId(),
-      title: typeof raw.title === "string" ? raw.title : "Wdh‑Session",
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
-      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
-      sets: sets.length ? sets : [{ id: makeId(), exercise: "", reps: 10, weightKg: 0 }],
-      restBetweenSetsSec: typeof raw.restBetweenSetsSec === "number" ? raw.restBetweenSetsSec : 60,
-      targetSetSec: typeof raw.targetSetSec === "number" ? raw.targetSetSec : undefined,
+      image: typeof img === "string" && img.trim() ? img.trim() : undefined,
     };
-  }
+  });
+
+  return {
+    kind: "REPS",
+    id: typeof raw.id === "string" ? raw.id : makeId(),
+    title: typeof raw.title === "string" ? raw.title : "Wdh‑Session",
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+
+    warmupSec: typeof raw.warmupSec === "number" ? Math.max(0, Math.trunc(raw.warmupSec)) : 0,
+    cooldownSec: typeof raw.cooldownSec === "number" ? Math.max(0, Math.trunc(raw.cooldownSec)) : 0,
+
+    sets: sets.length ? sets : [{ id: makeId(), exercise: "", reps: 10, weightKg: 0, image: undefined }],
+    restBetweenSetsSec: typeof raw.restBetweenSetsSec === "number" ? raw.restBetweenSetsSec : 60,
+    targetSetSec: typeof raw.targetSetSec === "number" ? raw.targetSetSec : undefined,
+  };
+}
+/* ===== ENDE TEIL 2/5: normalizeLoadedCard – REPS Block ===== */
+
 
   // TIME (alte Karten konnten ohne "kind" sein)
   if (raw.kind === "TIME" || (raw.timing && raw.exercise)) {
@@ -769,6 +793,7 @@ function makeRandomCard(): TimeCard {
   };
 }
 
+/* ===== ANFANG TEIL 5/5: makeRandomRepCard (mit warmup/cooldown) ===== */
 function makeRandomRepCard(): RepCard {
   const now = Date.now();
   const pool = ["Liegestütze", "Kniebeuge", "Dips", "Klimmzüge", "Rudern"];
@@ -780,7 +805,7 @@ function makeRandomRepCard(): RepCard {
     const exercise = sameExercise ? base : pool[Math.floor(Math.random() * pool.length)];
     const reps = 6 + Math.floor(Math.random() * 10);
     const weightKg = Math.random() < 0.5 ? 0 : 2.5 * (1 + Math.floor(Math.random() * 8));
-    return { id: makeId(), exercise, reps, weightKg };
+    return { id: makeId(), exercise, reps, weightKg, image: undefined };
   });
 
   return {
@@ -789,11 +814,17 @@ function makeRandomRepCard(): RepCard {
     title: "Zufall – Wdh",
     createdAt: now,
     updatedAt: now,
+
+    warmupSec: 0,
+    cooldownSec: 0,
+
     sets,
     restBetweenSetsSec: 60,
     targetSetSec: 60,
   };
 }
+/* ===== ENDE TEIL 5/5: makeRandomRepCard (mit warmup/cooldown) ===== */
+
 
 /* =========================
    Beep
@@ -1859,6 +1890,7 @@ function Editor({
    REPS Editor
 ========================= */
 
+/* ===== ANFANG TEIL 3/5: RepEditor (Warmup/Cooldown + Bilder) ===== */
 function RepEditor({
   initial,
   onCancel,
@@ -1868,18 +1900,45 @@ function RepEditor({
   onCancel: () => void;
   onSave: (card: RepCard) => void;
 }) {
+  type RepSetDraft = {
+    id: string;
+    exercise: string;
+    reps: number;
+    weightKg: number;
+    image: string; // im Editor: "" | data:... | https://...
+    imageUrlInput: string; // damit wir keine DataURL im Input anzeigen
+  };
+
   const [title, setTitle] = useState(initial?.title ?? "Wdh‑Session");
+
+  const [warmup, setWarmup] = useState(formatMMSS(initial?.warmupSec ?? 0));
   const [restSet, setRestSet] = useState(formatMMSS(initial?.restBetweenSetsSec ?? 60));
+  const [cooldown, setCooldown] = useState(formatMMSS(initial?.cooldownSec ?? 0));
+
   const [targetSet, setTargetSet] = useState(formatMMSS(initial?.targetSetSec ?? 0));
 
-  const [sets, setSets] = useState<RepSet[]>(
-    initial?.sets ?? [
-      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
-      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
-      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
-      { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0 },
-    ]
-  );
+  const [sets, setSets] = useState<RepSetDraft[]>(() => {
+    const base: RepSet[] =
+      initial?.sets ?? [
+        { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0, image: undefined },
+        { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0, image: undefined },
+        { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0, image: undefined },
+        { id: makeId(), exercise: "Liegestütze", reps: 10, weightKg: 0, image: undefined },
+      ];
+
+    return base.map((s) => {
+      const img = typeof s.image === "string" ? s.image : "";
+      const urlInput = img && !img.startsWith("data:") ? img : "";
+      return {
+        id: typeof s.id === "string" ? s.id : makeId(),
+        exercise: typeof s.exercise === "string" ? s.exercise : "",
+        reps: Number(s.reps) || 0,
+        weightKg: Number(s.weightKg) || 0,
+        image: img,
+        imageUrlInput: urlInput,
+      };
+    });
+  });
 
   function resizeSets(n: number) {
     const nextN = Math.max(1, Math.min(50, n || 1));
@@ -1887,21 +1946,113 @@ function RepEditor({
       if (prev.length === nextN) return prev;
       if (prev.length > nextN) return prev.slice(0, nextN);
 
-      const last = prev[prev.length - 1] ?? { id: makeId(), exercise: "", reps: 10, weightKg: 0 };
+      const last =
+        prev[prev.length - 1] ??
+        ({
+          id: makeId(),
+          exercise: "",
+          reps: 10,
+          weightKg: 0,
+          image: "",
+          imageUrlInput: "",
+        } as RepSetDraft);
+
       const extra = Array.from({ length: nextN - prev.length }, () => ({
         ...last,
         id: makeId(),
       }));
+
       return [...prev, ...extra];
     });
   }
 
-  function updateSet(id: string, patch: Partial<RepSet>) {
+  function updateSet(id: string, patch: Partial<RepSetDraft>) {
     setSets((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
 
   function removeSet(id: string) {
     setSets((prev) => (prev.length <= 1 ? prev : prev.filter((s) => s.id !== id)));
+  }
+
+  // ---------- Image Helpers (lokal) ----------
+  function readFileAsDataURL(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("FileReader error"));
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Image load error"));
+      img.src = src;
+    });
+  }
+
+  async function fileToResizedDataURL(file: File, maxSide = 1200, quality = 0.85): Promise<string> {
+    const dataUrl = await readFileAsDataURL(file);
+    if (!dataUrl.startsWith("data:image/")) return dataUrl;
+
+    try {
+      const img = await loadImage(dataUrl);
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+
+      const maxDim = Math.max(w, h);
+      const scale = maxDim > maxSide ? maxSide / maxDim : 1;
+
+      const cw = Math.max(1, Math.round(w * scale));
+      const ch = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return dataUrl;
+
+      ctx.drawImage(img, 0, 0, cw, ch);
+      return canvas.toDataURL("image/jpeg", quality);
+    } catch {
+      return dataUrl;
+    }
+  }
+
+  async function onPickSetImageFile(setId: string, file: File | null) {
+    if (!file) return;
+
+    if (file.size > 2_000_000) {
+      const ok = window.confirm(
+        `Das Bild ist ${(file.size / 1024 / 1024).toFixed(1)} MB groß. ` +
+          `Mehrere Bilder können localStorage sprengen. Trotzdem benutzen?`
+      );
+      if (!ok) return;
+    }
+
+    try {
+      const resized = await fileToResizedDataURL(file);
+      updateSet(setId, { image: resized, imageUrlInput: "" });
+    } catch {
+      window.alert("Bild konnte nicht geladen werden.");
+    }
+  }
+
+  function applySetImageUrl(setId: string) {
+    setSets((prev) =>
+      prev.map((s) => {
+        if (s.id !== setId) return s;
+        const trimmed = (s.imageUrlInput || "").trim();
+        return { ...s, imageUrlInput: trimmed, image: trimmed };
+      })
+    );
+  }
+
+  function removeSetImage(setId: string) {
+    updateSet(setId, { image: "", imageUrlInput: "" });
   }
 
   const previewCard: RepCard = {
@@ -1910,7 +2061,17 @@ function RepEditor({
     title,
     createdAt: initial?.createdAt ?? Date.now(),
     updatedAt: Date.now(),
-    sets,
+
+    warmupSec: parseMMSS(warmup) ?? 0,
+    cooldownSec: parseMMSS(cooldown) ?? 0,
+
+    sets: sets.map((s) => ({
+      id: s.id,
+      exercise: s.exercise,
+      reps: Number(s.reps) || 0,
+      weightKg: Number(s.weightKg) || 0,
+      image: s.image.trim() ? s.image.trim() : undefined,
+    })),
     restBetweenSetsSec: parseMMSS(restSet) ?? 60,
     targetSetSec: (parseMMSS(targetSet) ?? 0) || undefined,
   };
@@ -1928,8 +2089,18 @@ function RepEditor({
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <label>
+          Warmup (mm:ss)
+          <input value={warmup} onChange={(e) => setWarmup(e.target.value)} />
+        </label>
+
+        <label>
           Pause (mm:ss)
           <input value={restSet} onChange={(e) => setRestSet(e.target.value)} />
+        </label>
+
+        <label>
+          Cooldown (mm:ss)
+          <input value={cooldown} onChange={(e) => setCooldown(e.target.value)} />
         </label>
 
         <label>
@@ -1949,38 +2120,90 @@ function RepEditor({
         </label>
       </div>
 
-      <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ display: "grid", gap: 10 }}>
         {sets.map((s, i) => (
-          <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ width: 22, opacity: 0.7 }}>{i + 1}.</div>
+          <div key={s.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ width: 22, opacity: 0.7 }}>{i + 1}.</div>
 
-            <input
-              value={s.exercise}
-              onChange={(e) => updateSet(s.id, { exercise: e.target.value })}
-              placeholder="Übung"
-              style={{ flex: "1 1 160px" }}
-            />
+              <input
+                value={s.exercise}
+                onChange={(e) => updateSet(s.id, { exercise: e.target.value })}
+                placeholder="Übung"
+                style={{ flex: "1 1 180px" }}
+              />
 
-            <input
-              type="number"
-              min={0}
-              value={s.reps}
-              onChange={(e) => updateSet(s.id, { reps: Number(e.target.value) })}
-              style={{ width: 90 }}
-              title="Wdh"
-            />
+              <input
+                type="number"
+                min={0}
+                value={s.reps}
+                onChange={(e) => updateSet(s.id, { reps: Number(e.target.value) })}
+                style={{ width: 90 }}
+                title="Wdh"
+              />
 
-            <input
-              type="number"
-              min={0}
-              step={0.5}
-              value={s.weightKg}
-              onChange={(e) => updateSet(s.id, { weightKg: Number(e.target.value) })}
-              style={{ width: 140 }}
-              title="Zusatzgewicht (kg)"
-            />
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={s.weightKg}
+                onChange={(e) => updateSet(s.id, { weightKg: Number(e.target.value) })}
+                style={{ width: 140 }}
+                title="Zusatzgewicht (kg)"
+              />
 
-            <button onClick={() => removeSet(s.id)}>✕</button>
+              <button onClick={() => removeSet(s.id)}>✕</button>
+            </div>
+
+            {/* Bild pro Satz */}
+            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  void onPickSetImageFile(s.id, f);
+                  e.currentTarget.value = "";
+                }}
+              />
+
+              <button type="button" onClick={() => removeSetImage(s.id)} disabled={!s.image.trim()}>
+                Bild entfernen
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>…oder Bild‑URL:</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  style={{ flex: "1 1 260px" }}
+                  placeholder="https://…"
+                  value={s.imageUrlInput}
+                  onChange={(e) => updateSet(s.id, { imageUrlInput: e.target.value })}
+                />
+                <button type="button" onClick={() => applySetImageUrl(s.id)} disabled={!s.imageUrlInput.trim()}>
+                  URL übernehmen
+                </button>
+              </div>
+            </div>
+
+            {s.image.trim() ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vorschau:</div>
+                <img
+                  src={s.image}
+                  alt={`Satz ${i + 1}`}
+                  style={{
+                    width: "100%",
+                    maxHeight: 180,
+                    objectFit: "contain",
+                    borderRadius: 12,
+                    border: "1px solid #ddd",
+                    background: "#f3f3f3",
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
@@ -1994,21 +2217,28 @@ function RepEditor({
         <button
           onClick={() => {
             const now = Date.now();
+
             const saved: RepCard = {
               kind: "REPS",
               id: initial?.id ?? makeId(),
               title: title.trim() || "Wdh‑Session",
               createdAt: initial?.createdAt ?? now,
               updatedAt: now,
+
+              warmupSec: parseMMSS(warmup) ?? 0,
+              cooldownSec: parseMMSS(cooldown) ?? 0,
+
               sets: sets.map((s) => ({
-                ...s,
+                id: s.id,
                 exercise: (s.exercise || "").trim(),
                 reps: Math.max(0, Number(s.reps) || 0),
                 weightKg: Math.max(0, Number(s.weightKg) || 0),
+                image: s.image.trim() ? s.image.trim() : undefined,
               })),
               restBetweenSetsSec: parseMMSS(restSet) ?? 60,
               targetSetSec: (parseMMSS(targetSet) ?? 0) || undefined,
             };
+
             onSave(saved);
           }}
         >
@@ -2018,10 +2248,14 @@ function RepEditor({
 
       <div style={{ fontSize: 12, opacity: 0.7 }}>
         Hinweis: „kg bewegt“ = Σ(Wdh × Zusatzgewicht). Körpergewicht ist nicht enthalten.
+        <br />
+        Bilder werden lokal gespeichert (bei vielen großen Bildern kann localStorage voll werden).
       </div>
     </div>
   );
 }
+/* ===== ENDE TEIL 3/5: RepEditor (Warmup/Cooldown + Bilder) ===== */
+
 
 /* =========================
    Small Fields
@@ -2794,6 +3028,7 @@ function Runner({
    REPS Runner
 ========================= */
 
+/* ===== ANFANG TEIL 4/5: RepRunner (Warmup/Cooldown + Bilder) ===== */
 function RepRunner({
   card,
   onBack,
@@ -2808,7 +3043,17 @@ function RepRunner({
   profileName: string;
   onSaveLog: (entry: WorkoutLogEntry) => void;
 }) {
-  type Stage = "READY" | "SET" | "REST" | "DONE";
+  type Stage = "READY" | "WARMUP" | "SET" | "REST" | "COOLDOWN" | "DONE";
+
+  const safeSets = useMemo(() => {
+    const s = Array.isArray(card.sets) ? card.sets : [];
+    if (s.length) return s;
+    return [{ id: "tmp", exercise: "—", reps: 0, weightKg: 0, image: undefined }] as RepSet[];
+  }, [card.sets]);
+
+  const warmupSec = Math.max(0, Number(card.warmupSec) || 0);
+  const cooldownSec = Math.max(0, Number(card.cooldownSec) || 0);
+  const restBetweenSetsSec = Math.max(0, Number(card.restBetweenSetsSec) || 0);
 
   const [idx, setIdx] = useState(0);
   const [stage, setStage] = useState<Stage>("READY");
@@ -2830,51 +3075,103 @@ function RepRunner({
     };
   }, [bigView]);
 
+  // Timer
   useEffect(() => {
     if (!running) return;
 
     const id = window.setInterval(() => {
       setT((prev) => {
-        if (stage === "REST") return Math.max(0, prev - 1);
-        return prev + 1;
+        if (stage === "SET") return prev + 1; // zählt hoch
+        if (stage === "REST" || stage === "WARMUP" || stage === "COOLDOWN") return Math.max(0, prev - 1); // zählt runter
+        return prev;
       });
     }, 1000);
 
     return () => window.clearInterval(id);
   }, [running, stage]);
 
-  const current = card.sets[idx];
+  const current = safeSets[idx] ?? safeSets[0];
+  const nextSet = safeSets[Math.min(idx + 1, safeSets.length - 1)] ?? current;
+
+  // In REST zeigen wir schon die nächste Übung (praktisch)
+  const displaySet =
+    stage === "REST" ? nextSet :
+    stage === "WARMUP" ? safeSets[0] :
+    stage === "COOLDOWN" ? current :
+    current;
+
+  const displayName = (displaySet?.exercise || "").trim() || "—";
+  const displayImg = (displaySet?.image || "").trim();
+  const showImg = Boolean(displayImg) && (stage === "WARMUP" || stage === "SET" || stage === "REST" || stage === "COOLDOWN");
+
   const { totalReps, totalKg } = repTotals(card);
   const breakdown = repBreakdown(card);
 
   function startWorkout() {
     setIdx(0);
+    if (warmupSec > 0) {
+      setStage("WARMUP");
+      setT(warmupSec);
+      setRunning(true);
+      return;
+    }
     setStage("SET");
     setT(0);
     setRunning(true);
   }
 
   function stopSet() {
+    const isLast = idx >= safeSets.length - 1;
+
+    if (isLast) {
+      if (cooldownSec > 0) {
+        setStage("COOLDOWN");
+        setT(cooldownSec);
+        setRunning(true);
+      } else {
+        setRunning(false);
+        setStage("DONE");
+      }
+      return;
+    }
+
     setStage("REST");
-    setT(card.restBetweenSetsSec);
+    setT(restBetweenSetsSec);
     setRunning(true);
   }
 
-  function goNextAfterRest() {
-    if (idx >= card.sets.length - 1) {
-      setRunning(false);
-      setStage("DONE");
-      return;
-    }
-    setIdx((i) => i + 1);
+  function goNextSet() {
+    setIdx((i) => Math.min(safeSets.length - 1, i + 1));
     setStage("SET");
     setT(0);
     setRunning(true);
   }
 
+  function skipCountdown() {
+    setT(0);
+  }
+
+  // Auto-Übergänge bei t==0
   useEffect(() => {
-    if (stage === "REST" && running && t === 0) {
-      goNextAfterRest();
+    if (!running) return;
+    if (t !== 0) return;
+
+    if (stage === "WARMUP") {
+      setStage("SET");
+      setT(0);
+      setRunning(true);
+      return;
+    }
+
+    if (stage === "REST") {
+      goNextSet();
+      return;
+    }
+
+    if (stage === "COOLDOWN") {
+      setRunning(false);
+      setStage("DONE");
+      return;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, stage, running]);
@@ -2887,27 +3184,68 @@ function RepRunner({
     setSaved(true);
   }
 
-  const tone: FocusTone = stage === "REST" ? "rest" : stage === "DONE" ? "done" : stage === "READY" ? "warmup" : "work";
+  const tone: FocusTone =
+    stage === "REST"
+      ? "rest"
+      : stage === "DONE"
+      ? "done"
+      : stage === "COOLDOWN"
+      ? "cooldown"
+      : stage === "SET"
+      ? "work"
+      : "warmup";
+
   const bg = toneToBg(tone);
 
   const progress =
     stage === "DONE"
       ? 1
-      : stage === "REST" && card.restBetweenSetsSec > 0
-      ? Math.max(0, Math.min(1, 1 - t / card.restBetweenSetsSec))
+      : stage === "WARMUP" && warmupSec > 0
+      ? Math.max(0, Math.min(1, 1 - t / warmupSec))
+      : stage === "REST" && restBetweenSetsSec > 0
+      ? Math.max(0, Math.min(1, 1 - t / restBetweenSetsSec))
+      : stage === "COOLDOWN" && cooldownSec > 0
+      ? Math.max(0, Math.min(1, 1 - t / cooldownSec))
       : stage === "SET" && card.targetSetSec
       ? Math.max(0, Math.min(1, t / card.targetSetSec))
       : 0;
 
   const headline =
-    stage === "READY" ? "Bereit" :
-    stage === "SET" ? `Satz ${idx + 1}/${card.sets.length}` :
-    stage === "REST" ? "Pause" :
-    "Fertig";
+    stage === "READY"
+      ? "Bereit"
+      : stage === "WARMUP"
+      ? "Warmup"
+      : stage === "SET"
+      ? `Satz ${idx + 1}/${safeSets.length}`
+      : stage === "REST"
+      ? "Pause"
+      : stage === "COOLDOWN"
+      ? "Cooldown"
+      : "Fertig";
 
   const fsSupported =
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&
     typeof (document as any)?.exitFullscreen === "function";
+
+  const imgStyleBig: any = {
+    width: "min(900px, 100%)",
+    maxHeight: "32vh",
+    objectFit: "contain",
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: "rgba(0,0,0,0.18)",
+    marginTop: 12,
+  };
+
+  const imgStyleSmall: any = {
+    width: "100%",
+    maxHeight: 160,
+    objectFit: "contain",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: "rgba(0,0,0,0.18)",
+    marginTop: 10,
+  };
 
   if (bigView) {
     const overlayStyle: any = {
@@ -2978,11 +3316,15 @@ function RepRunner({
           </div>
 
           <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
-            {stage === "SET" && current ? (current.exercise || "—") : stage === "REST" ? "Atmen" : stage === "DONE" ? "✅" : "Start"}
+            {displayName}
           </div>
 
+          {showImg ? <img src={displayImg} alt="Übungsbild" style={imgStyleBig} /> : null}
+
           <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
-            {stage === "SET" && current ? `${current.reps} Wdh · ${current.weightKg} kg Zusatz` : "\u00A0"}
+            {(stage === "SET" || stage === "REST" || stage === "WARMUP") && displaySet
+              ? `${displaySet.reps} Wdh · ${displaySet.weightKg} kg Zusatz`
+              : "\u00A0"}
           </div>
 
           <div style={{ fontSize: 13, opacity: 0.9 }}>
@@ -2992,8 +3334,12 @@ function RepRunner({
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center", marginTop: 12 }}>
           {stage === "READY" ? <button style={btnBig} onClick={startWorkout}>Start</button> : null}
+
+          {stage === "WARMUP" || stage === "REST" || stage === "COOLDOWN" ? (
+            <button style={btnBig} onClick={skipCountdown}>Skip</button>
+          ) : null}
+
           {stage === "SET" ? <button style={btnBig} onClick={stopSet}>Stop (Satz fertig)</button> : null}
-          {stage === "REST" ? <button style={btnBig} onClick={() => setT(0)}>Skip</button> : null}
 
           {stage === "DONE" ? (
             !saved ? (
@@ -3007,7 +3353,7 @@ function RepRunner({
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.9, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-          <div>Tip: Handy quer = noch größer</div>
+          <div>Tip: Pause zeigt schon die nächste Übung</div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
@@ -3041,15 +3387,36 @@ function RepRunner({
 
       {stage === "READY" && <button onClick={startWorkout}>Start</button>}
 
+      {(stage === "WARMUP" || stage === "COOLDOWN") && (
+        <div style={{ borderRadius: 16, padding: 12, background: bg, color: "#fff" }}>
+          <div style={{ fontWeight: 900 }}>{headline}</div>
+
+          <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
+
+          <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 10 }}>
+            <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
+          </div>
+
+          <div style={{ marginTop: 10, fontWeight: 800 }}>{displayName}</div>
+          {showImg ? <img src={displayImg} alt="Übungsbild" style={imgStyleSmall} /> : null}
+
+          <button onClick={skipCountdown} style={{ marginTop: 12 }}>
+            Skip
+          </button>
+        </div>
+      )}
+
       {stage === "SET" && current && (
         <div style={{ borderRadius: 16, padding: 12, background: bg, color: "#fff" }}>
           <div style={{ fontWeight: 900 }}>
-            Satz {idx + 1}/{card.sets.length}
+            Satz {idx + 1}/{safeSets.length}
           </div>
 
           <div style={{ marginTop: 6 }}>
             <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg Zusatzgewicht
           </div>
+
+          {current.image ? <img src={current.image} alt="Übungsbild" style={imgStyleSmall} /> : null}
 
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
 
@@ -3077,7 +3444,10 @@ function RepRunner({
             <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
           </div>
 
-          <button onClick={() => setT(0)} style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 10, fontWeight: 800 }}>Nächste Übung: {displayName}</div>
+          {showImg ? <img src={displayImg} alt="Übungsbild" style={imgStyleSmall} /> : null}
+
+          <button onClick={skipCountdown} style={{ marginTop: 12 }}>
             Skip
           </button>
         </div>
@@ -3108,6 +3478,8 @@ function RepRunner({
     </div>
   );
 }
+/* ===== ENDE TEIL 4/5: RepRunner (Warmup/Cooldown + Bilder) ===== */
+
 
 /* =========================
    Profiles View

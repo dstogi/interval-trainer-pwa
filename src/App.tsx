@@ -3176,11 +3176,7 @@ function Runner({
 /* ===== ENDE TEIL 4/5: TIME Runner (Bild klein & nur bei ARBEIT/Countdown) ===== */
 
 
-/* =========================
-   REPS Runner
-========================= */
-
-/* ===== ANFANG TEIL 8/8: RepRunner (MediaBox) ===== */
+/* ===== ANFANG TEIL 9/9: RepRunner (Media nur im Satz Toggle) ===== */
 function RepRunner({
   card,
   onBack,
@@ -3206,6 +3202,25 @@ function RepRunner({
   const warmupSec = Math.max(0, Number(card.warmupSec) || 0);
   const cooldownSec = Math.max(0, Number(card.cooldownSec) || 0);
   const restBetweenSetsSec = Math.max(0, Number(card.restBetweenSetsSec) || 0);
+
+  // ✅ Schalter: Media nur im Satz (nicht in Pause)
+  const MEDIA_ONLY_SET_KEY = "interval_trainer_media_only_set_v1";
+  const [mediaOnlyInSet, setMediaOnlyInSet] = useState<boolean>(() => {
+    try {
+      // default: EIN
+      return localStorage.getItem(MEDIA_ONLY_SET_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MEDIA_ONLY_SET_KEY, mediaOnlyInSet ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [mediaOnlyInSet]);
 
   const [idx, setIdx] = useState(0);
   const [stage, setStage] = useState<Stage>("READY");
@@ -3245,16 +3260,25 @@ function RepRunner({
   const current = safeSets[idx] ?? safeSets[0];
   const nextSet = safeSets[Math.min(idx + 1, safeSets.length - 1)] ?? current;
 
-  // In REST zeigen wir schon die nächste Übung
+  // In REST zeigen wir schon die nächste Übung (Name immer, Media optional)
   const displaySet =
-    stage === "REST" ? nextSet :
-    stage === "WARMUP" ? safeSets[0] :
-    stage === "COOLDOWN" ? current :
-    current;
+    stage === "REST"
+      ? nextSet
+      : stage === "WARMUP"
+      ? safeSets[0]
+      : stage === "COOLDOWN"
+      ? current
+      : current;
 
   const displayName = (displaySet?.exercise || "").trim() || "—";
   const displayMedia = (displaySet?.image || "").trim();
-  const showMedia = Boolean(displayMedia) && (stage === "WARMUP" || stage === "SET" || stage === "REST" || stage === "COOLDOWN");
+
+  // ✅ Media-Regel:
+  // - wenn mediaOnlyInSet = true  -> Media NUR im SET
+  // - wenn false                 -> Media auch in Warmup/Rest/Cooldown
+  const showMedia =
+    Boolean(displayMedia) &&
+    (stage === "SET" || (!mediaOnlyInSet && (stage === "WARMUP" || stage === "REST" || stage === "COOLDOWN")));
 
   const { totalReps, totalKg } = repTotals(card);
   const breakdown = repBreakdown(card);
@@ -3443,6 +3467,16 @@ function RepRunner({
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button style={btnSmall} onClick={() => setBigView(false)}>Details</button>
+
+            {/* ✅ Toggle-Button im BigView */}
+            <button
+              style={btnSmall}
+              onClick={() => setMediaOnlyInSet((v) => !v)}
+              title="Wenn aktiv: Media wird nur während dem Satz angezeigt (nicht in Pause/Warmup/Cooldown)."
+            >
+              Media: {mediaOnlyInSet ? "nur Satz" : "immer"}
+            </button>
+
             <button
               style={btnSmall}
               disabled={!fsSupported}
@@ -3505,7 +3539,7 @@ function RepRunner({
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.9, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-          <div>Video: mp4/webm oder YouTube-Link</div>
+          <div>Media: {mediaOnlyInSet ? "nur Satz" : "auch Pause"} · Video: mp4/webm oder YouTube</div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
@@ -3530,6 +3564,16 @@ function RepRunner({
       <div style={{ fontSize: 12, opacity: 0.7 }}>
         Profil: <b>{profileName}</b>
       </div>
+
+      {/* ✅ Schalter im Normal-View */}
+      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+        <input
+          type="checkbox"
+          checked={mediaOnlyInSet}
+          onChange={(e) => setMediaOnlyInSet(e.target.checked)}
+        />
+        Media nur im Satz (nicht in Pause)
+      </label>
 
       <div style={{ fontWeight: 900, fontSize: 18 }}>{card.title}</div>
 
@@ -3568,7 +3612,7 @@ function RepRunner({
             <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg Zusatzgewicht
           </div>
 
-          {current.image ? <MediaBox src={current.image} alt="Media" style={mediaStyleSmall} linkColor="#fff" /> : null}
+          {showMedia ? <MediaBox src={displayMedia} alt="Media" style={mediaStyleSmall} linkColor="#fff" /> : null}
 
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
 
@@ -3597,6 +3641,8 @@ function RepRunner({
           </div>
 
           <div style={{ marginTop: 10, fontWeight: 800 }}>Nächste Übung: {displayName}</div>
+
+          {/* ✅ nur zeigen, wenn Toggle AUS */}
           {showMedia ? <MediaBox src={displayMedia} alt="Media" style={mediaStyleSmall} linkColor="#fff" /> : null}
 
           <button onClick={skipCountdown} style={{ marginTop: 12 }}>
@@ -3630,7 +3676,7 @@ function RepRunner({
     </div>
   );
 }
-/* ===== ENDE TEIL 8/8: RepRunner (MediaBox) ===== */
+/* ===== ENDE TEIL 9/9: RepRunner (Media nur im Satz Toggle) ===== */
 
 
 /* =========================

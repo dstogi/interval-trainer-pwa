@@ -1886,11 +1886,7 @@ function Editor({
 /* ===== ENDE TEIL 3/5: TIME Editor (pro Satz Übung + Bild) ===== */
 
 
-/* =========================
-   REPS Editor
-========================= */
-
-/* ===== ANFANG TEIL 3/5: RepEditor (Warmup/Cooldown + Bilder) ===== */
+/* ===== ANFANG TEIL 7/8: RepEditor (Bild/Video URL Vorschau) ===== */
 function RepEditor({
   initial,
   onCancel,
@@ -1905,8 +1901,8 @@ function RepEditor({
     exercise: string;
     reps: number;
     weightKg: number;
-    image: string; // im Editor: "" | data:... | https://...
-    imageUrlInput: string; // damit wir keine DataURL im Input anzeigen
+    image: string; // kann Bild-URL ODER Video-URL sein
+    imageUrlInput: string;
   };
 
   const [title, setTitle] = useState(initial?.title ?? "Wdh‑Session");
@@ -1927,14 +1923,14 @@ function RepEditor({
       ];
 
     return base.map((s) => {
-      const img = typeof s.image === "string" ? s.image : "";
-      const urlInput = img && !img.startsWith("data:") ? img : "";
+      const media = typeof s.image === "string" ? s.image : "";
+      const urlInput = media && !media.startsWith("data:") ? media : "";
       return {
         id: typeof s.id === "string" ? s.id : makeId(),
         exercise: typeof s.exercise === "string" ? s.exercise : "",
         reps: Number(s.reps) || 0,
         weightKg: Number(s.weightKg) || 0,
-        image: img,
+        image: media,
         imageUrlInput: urlInput,
       };
     });
@@ -2041,7 +2037,7 @@ function RepEditor({
     }
   }
 
-  function applySetImageUrl(setId: string) {
+  function applySetMediaUrl(setId: string) {
     setSets((prev) =>
       prev.map((s) => {
         if (s.id !== setId) return s;
@@ -2051,7 +2047,7 @@ function RepEditor({
     );
   }
 
-  function removeSetImage(setId: string) {
+  function removeSetMedia(setId: string) {
     updateSet(setId, { image: "", imageUrlInput: "" });
   }
 
@@ -2120,6 +2116,11 @@ function RepEditor({
         </label>
       </div>
 
+      <div style={{ fontSize: 12, opacity: 0.75 }}>
+        Tipp für Video: nutze **direkte Video‑Links** (z.B. <b>.mp4</b>) oder **YouTube‑Links** (watch / youtu.be).
+        Suchseiten (Yahoo/Google) sind keine direkten Medienlinks → dann erscheint nur „Link öffnen“.
+      </div>
+
       <div style={{ display: "grid", gap: 10 }}>
         {sets.map((s, i) => (
           <div key={s.id} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 10 }}>
@@ -2155,7 +2156,7 @@ function RepEditor({
               <button onClick={() => removeSet(s.id)}>✕</button>
             </div>
 
-            {/* Bild pro Satz */}
+            {/* Upload (nur Bild – Videos lieber als URL) */}
             <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <input
                 type="file"
@@ -2167,21 +2168,21 @@ function RepEditor({
                 }}
               />
 
-              <button type="button" onClick={() => removeSetImage(s.id)} disabled={!s.image.trim()}>
-                Bild entfernen
+              <button type="button" onClick={() => removeSetMedia(s.id)} disabled={!s.image.trim()}>
+                Media entfernen
               </button>
             </div>
 
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>…oder Bild‑URL:</div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>…oder Bild/Video‑URL:</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <input
                   style={{ flex: "1 1 260px" }}
-                  placeholder="https://…"
+                  placeholder="https://… (jpg/png/mp4/youtube)"
                   value={s.imageUrlInput}
                   onChange={(e) => updateSet(s.id, { imageUrlInput: e.target.value })}
                 />
-                <button type="button" onClick={() => applySetImageUrl(s.id)} disabled={!s.imageUrlInput.trim()}>
+                <button type="button" onClick={() => applySetMediaUrl(s.id)} disabled={!s.imageUrlInput.trim()}>
                   URL übernehmen
                 </button>
               </div>
@@ -2190,12 +2191,13 @@ function RepEditor({
             {s.image.trim() ? (
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Vorschau:</div>
-                <img
+
+                <MediaBox
                   src={s.image}
                   alt={`Satz ${i + 1}`}
                   style={{
                     width: "100%",
-                    maxHeight: 180,
+                    height: 200,
                     objectFit: "contain",
                     borderRadius: 12,
                     border: "1px solid #ddd",
@@ -2248,13 +2250,12 @@ function RepEditor({
 
       <div style={{ fontSize: 12, opacity: 0.7 }}>
         Hinweis: „kg bewegt“ = Σ(Wdh × Zusatzgewicht). Körpergewicht ist nicht enthalten.
-        <br />
-        Bilder werden lokal gespeichert (bei vielen großen Bildern kann localStorage voll werden).
       </div>
     </div>
   );
 }
-/* ===== ENDE TEIL 3/5: RepEditor (Warmup/Cooldown + Bilder) ===== */
+/* ===== ENDE TEIL 7/8: RepEditor (Bild/Video URL Vorschau) ===== */
+
 
 
 /* =========================
@@ -2285,6 +2286,157 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
     </label>
   );
 }
+/* ===== ANFANG TEIL 6/8: Media Helper (Image/Video/YouTube/Vimeo) ===== */
+type MediaKind = "none" | "image" | "video" | "youtube" | "vimeo" | "unknown";
+
+function safeParseUrl(raw: string): URL | null {
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
+function parseYouTubeId(raw: string): string | null {
+  const u = safeParseUrl(raw);
+  if (!u) return null;
+
+  const host = (u.hostname || "").toLowerCase();
+  const path = u.pathname || "";
+
+  const isYouTube =
+    host.includes("youtube.com") ||
+    host.includes("youtube-nocookie.com") ||
+    host === "youtu.be" ||
+    host.endsWith(".youtu.be");
+
+  if (!isYouTube) return null;
+
+  // youtu.be/<id>
+  if (host === "youtu.be" || host.endsWith(".youtu.be")) {
+    const id = path.replace("/", "").trim();
+    return id ? id : null;
+  }
+
+  // youtube.com/watch?v=<id>
+  const v = u.searchParams.get("v");
+  if (v) return v.trim() || null;
+
+  // /embed/<id>  oder /shorts/<id>
+  const m = path.match(/\/(embed|shorts)\/([^/?#]+)/i);
+  if (m && m[2]) return m[2].trim() || null;
+
+  return null;
+}
+
+function parseVimeoId(raw: string): string | null {
+  const u = safeParseUrl(raw);
+  if (!u) return null;
+
+  const host = (u.hostname || "").toLowerCase();
+  if (!host.includes("vimeo.com")) return null;
+
+  // vimeo.com/<id> oder player.vimeo.com/video/<id>
+  const m = (u.pathname || "").match(/\/(video\/)?(\d+)/i);
+  if (m && m[2]) return m[2].trim() || null;
+
+  return null;
+}
+
+function classifyMedia(raw: string): { kind: MediaKind; embedSrc?: string } {
+  const s = (raw || "").trim();
+  if (!s) return { kind: "none" };
+
+  const lower = s.toLowerCase();
+
+  // data:...
+  if (lower.startsWith("data:image/")) return { kind: "image" };
+  if (lower.startsWith("data:video/")) return { kind: "video" };
+
+  // YouTube / Vimeo
+  const yt = parseYouTubeId(s);
+  if (yt) return { kind: "youtube", embedSrc: `https://www.youtube.com/embed/${yt}` };
+
+  const vm = parseVimeoId(s);
+  if (vm) return { kind: "vimeo", embedSrc: `https://player.vimeo.com/video/${vm}` };
+
+  // Direct video files
+  if (/\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/.test(lower)) return { kind: "video" };
+
+  // Direct image files
+  if (/\.(png|jpg|jpeg|gif|webp|avif|svg)(\?.*)?$/.test(lower)) return { kind: "image" };
+
+  // Unknown (z.B. Suchseite)
+  return { kind: "unknown" };
+}
+
+function MediaBox({
+  src,
+  alt,
+  style,
+  linkColor = "inherit",
+}: {
+  src?: string;
+  alt?: string;
+  style?: any;
+  linkColor?: string;
+}) {
+  const trimmed = (src || "").trim();
+  if (!trimmed) return null;
+
+  const { kind, embedSrc } = classifyMedia(trimmed);
+
+  if (kind === "image") {
+    return <img src={trimmed} alt={alt ?? "Bild"} style={style} />;
+  }
+
+  if (kind === "video") {
+    return (
+      <video
+        src={trimmed}
+        style={style}
+        controls
+        playsInline
+        muted
+        loop
+        autoPlay
+        preload="metadata"
+      />
+    );
+  }
+
+  if (kind === "youtube" || kind === "vimeo") {
+    return (
+      <iframe
+        src={embedSrc}
+        title="Video"
+        style={style}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+      />
+    );
+  }
+
+  // unknown → nur Link (damit keine kaputte Bild-Vorschau erscheint)
+  return (
+    <div
+      style={{
+        ...(style || {}),
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 10,
+      }}
+    >
+      <a href={trimmed} target="_blank" rel="noreferrer" style={{ color: linkColor, fontWeight: 800 }}>
+        🔗 Link öffnen
+      </a>
+    </div>
+  );
+}
+/* ===== ENDE TEIL 6/8: Media Helper (Image/Video/YouTube/Vimeo) ===== */
+
+
 
 /* ===== ANFANG TEIL 4/5: TIME Runner (Bild klein & nur bei ARBEIT/Countdown) ===== */
 function Runner({
@@ -3028,7 +3180,7 @@ function Runner({
    REPS Runner
 ========================= */
 
-/* ===== ANFANG TEIL 4/5: RepRunner (Warmup/Cooldown + Bilder) ===== */
+/* ===== ANFANG TEIL 8/8: RepRunner (MediaBox) ===== */
 function RepRunner({
   card,
   onBack,
@@ -3093,7 +3245,7 @@ function RepRunner({
   const current = safeSets[idx] ?? safeSets[0];
   const nextSet = safeSets[Math.min(idx + 1, safeSets.length - 1)] ?? current;
 
-  // In REST zeigen wir schon die nächste Übung (praktisch)
+  // In REST zeigen wir schon die nächste Übung
   const displaySet =
     stage === "REST" ? nextSet :
     stage === "WARMUP" ? safeSets[0] :
@@ -3101,8 +3253,8 @@ function RepRunner({
     current;
 
   const displayName = (displaySet?.exercise || "").trim() || "—";
-  const displayImg = (displaySet?.image || "").trim();
-  const showImg = Boolean(displayImg) && (stage === "WARMUP" || stage === "SET" || stage === "REST" || stage === "COOLDOWN");
+  const displayMedia = (displaySet?.image || "").trim();
+  const showMedia = Boolean(displayMedia) && (stage === "WARMUP" || stage === "SET" || stage === "REST" || stage === "COOLDOWN");
 
   const { totalReps, totalKg } = repTotals(card);
   const breakdown = repBreakdown(card);
@@ -3227,9 +3379,9 @@ function RepRunner({
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&
     typeof (document as any)?.exitFullscreen === "function";
 
-  const imgStyleBig: any = {
+  const mediaStyleBig: any = {
     width: "min(900px, 100%)",
-    maxHeight: "32vh",
+    height: "32vh",
     objectFit: "contain",
     borderRadius: 16,
     border: "1px solid rgba(255,255,255,0.25)",
@@ -3237,9 +3389,9 @@ function RepRunner({
     marginTop: 12,
   };
 
-  const imgStyleSmall: any = {
+  const mediaStyleSmall: any = {
     width: "100%",
-    maxHeight: 160,
+    height: 180,
     objectFit: "contain",
     borderRadius: 12,
     border: "1px solid rgba(255,255,255,0.25)",
@@ -3319,7 +3471,7 @@ function RepRunner({
             {displayName}
           </div>
 
-          {showImg ? <img src={displayImg} alt="Übungsbild" style={imgStyleBig} /> : null}
+          {showMedia ? <MediaBox src={displayMedia} alt="Media" style={mediaStyleBig} linkColor="#fff" /> : null}
 
           <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
             {(stage === "SET" || stage === "REST" || stage === "WARMUP") && displaySet
@@ -3353,7 +3505,7 @@ function RepRunner({
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.9, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-          <div>Tip: Pause zeigt schon die nächste Übung</div>
+          <div>Video: mp4/webm oder YouTube-Link</div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
@@ -3398,7 +3550,7 @@ function RepRunner({
           </div>
 
           <div style={{ marginTop: 10, fontWeight: 800 }}>{displayName}</div>
-          {showImg ? <img src={displayImg} alt="Übungsbild" style={imgStyleSmall} /> : null}
+          {showMedia ? <MediaBox src={displayMedia} alt="Media" style={mediaStyleSmall} linkColor="#fff" /> : null}
 
           <button onClick={skipCountdown} style={{ marginTop: 12 }}>
             Skip
@@ -3416,7 +3568,7 @@ function RepRunner({
             <b>{current.exercise || "—"}</b> · {current.reps} Wdh · {current.weightKg} kg Zusatzgewicht
           </div>
 
-          {current.image ? <img src={current.image} alt="Übungsbild" style={imgStyleSmall} /> : null}
+          {current.image ? <MediaBox src={current.image} alt="Media" style={mediaStyleSmall} linkColor="#fff" /> : null}
 
           <div style={{ marginTop: 10, fontSize: 28, fontVariantNumeric: "tabular-nums" }}>{formatMMSS(t)}</div>
 
@@ -3445,7 +3597,7 @@ function RepRunner({
           </div>
 
           <div style={{ marginTop: 10, fontWeight: 800 }}>Nächste Übung: {displayName}</div>
-          {showImg ? <img src={displayImg} alt="Übungsbild" style={imgStyleSmall} /> : null}
+          {showMedia ? <MediaBox src={displayMedia} alt="Media" style={mediaStyleSmall} linkColor="#fff" /> : null}
 
           <button onClick={skipCountdown} style={{ marginTop: 12 }}>
             Skip
@@ -3478,7 +3630,7 @@ function RepRunner({
     </div>
   );
 }
-/* ===== ENDE TEIL 4/5: RepRunner (Warmup/Cooldown + Bilder) ===== */
+/* ===== ENDE TEIL 8/8: RepRunner (MediaBox) ===== */
 
 
 /* =========================

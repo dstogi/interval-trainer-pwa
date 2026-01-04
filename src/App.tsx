@@ -2945,65 +2945,76 @@ function Runner({
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
 
-        {/* PRE-WORK COUNTDOWN OVERLAY */}
-        {showPreWork ? (
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 10000,
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "center",
-              alignItems: "center",
-              textAlign: "center",
-              color: "#fff",
-              ...workBgStyle,
-              padding:
-                "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
-            }}
-          >
-            <div style={{ position: "absolute", top: 12, right: 12 }}>
-              <button
-                style={{
-                  fontSize: 16,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.25)",
-                  background: "rgba(255,255,255,0.12)",
-                  color: "#fff",
-                }}
-                onClick={skip}
-              >
-                Skip
-              </button>
-            </div>
+{/* PRE-WORK COUNTDOWN OVERLAY */}
+{showPreWork ? (
+  <div
+    className="focus-overlay countdown"
+    style={{
+      position: "fixed",
+      inset: 0,
+      zIndex: 10000,
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center",
+      alignItems: "center",
+      textAlign: "center",
+      color: "#fff",
+      ...workBgStyle,
+      padding:
+        "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+    }}
+  >
+    <div style={{ position: "absolute", top: 12, right: 12 }}>
+      <button
+        style={{
+          fontSize: 16,
+          padding: "10px 12px",
+          borderRadius: 12,
+          border: "1px solid rgba(255,255,255,0.25)",
+          background: "rgba(255,255,255,0.12)",
+          color: "#fff",
+        }}
+        onClick={skip}
+      >
+        Skip
+      </button>
+    </div>
 
-            <div
-              style={{
-                fontSize: "clamp(18px, 4vw, 44px)",
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                opacity: 0.95,
-              }}
-            >
-              NÄCHSTE: ARBEIT
-            </div>
+    <div
+      style={{
+        fontSize: "clamp(18px, 4vw, 44px)",
+        letterSpacing: "0.12em",
+        textTransform: "uppercase",
+        opacity: 0.95,
+      }}
+    >
+      NÄCHSTE: ARBEIT
+    </div>
 
-            <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>{currentName}</div>
+    <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
+      {currentName}
+    </div>
 
-            {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
+    {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
 
-            <div style={{ fontSize: "clamp(140px, 28vw, 360px)", fontWeight: 900, lineHeight: 1, marginTop: 18 }}>
-              {runner.preWorkSec}
-            </div>
+    <div
+      className="focus-timer"
+      style={{
+        fontSize: "clamp(140px, 28vw, 360px)",
+        fontWeight: 900,
+        lineHeight: 1,
+        marginTop: 18,
+      }}
+    >
+      {runner.preWorkSec}
+    </div>
 
-            <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
-              Los geht’s in {runner.preWorkSec}…
-            </div>
-          </div>
-        ) : null}
-      </div>
+    <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
+      Los geht’s in {runner.preWorkSec}…
+    </div>
+  </div>
+) : null}
+     </div>
     );
   }
 
@@ -3112,64 +3123,75 @@ function Runner({
         </div>
       )}
 
-      {/* PRE-WORK COUNTDOWN auch in Normalansicht */}
-      {showPreWork ? (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 9999,
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            alignItems: "center",
-            textAlign: "center",
-            color: "#fff",
-            ...workBgStyle,
-            padding:
-              "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
-          }}
-        >
-          <div style={{ position: "absolute", top: 12, right: 12 }}>
-            <button
-              style={{
-                fontSize: 16,
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.25)",
-                background: "rgba(255,255,255,0.12)",
-                color: "#fff",
-              }}
-              onClick={skip}
-            >
-              Skip
-            </button>
-          </div>
+{/* PRE-WORK COUNTDOWN auch in Normalansicht */}
+{showPreWork ? (
+  <div
+    className="focus-overlay countdown"
+    style={{
+      position: "fixed",
+      inset: 0,
+      zIndex: 9999,
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center",
+      alignItems: "center",
+      textAlign: "center",
+      color: "#fff",
+      ...workBgStyle,
+      padding:
+        "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+    }}
+  >
+    <div style={{ position: "absolute", top: 12, right: 12 }}>
+      <button
+        style={{
+          fontSize: 16,
+          padding: "10px 12px",
+          borderRadius: 12,
+          border: "1px solid rgba(255,255,255,0.25)",
+          background: "rgba(255,255,255,0.12)",
+          color: "#fff",
+        }}
+        onClick={skip}
+      >
+        Skip
+      </button>
+    </div>
 
-          <div
-            style={{
-              fontSize: "clamp(18px, 4vw, 44px)",
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              opacity: 0.95,
-            }}
-          >
-            NÄCHSTE: ARBEIT
-          </div>
+    <div
+      style={{
+        fontSize: "clamp(18px, 4vw, 44px)",
+        letterSpacing: "0.12em",
+        textTransform: "uppercase",
+        opacity: 0.95,
+      }}
+    >
+      NÄCHSTE: ARBEIT
+    </div>
 
-          <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>{currentName}</div>
+    <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
+      {currentName}
+    </div>
 
-          {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
+    {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
 
-          <div style={{ fontSize: "clamp(140px, 28vw, 360px)", fontWeight: 900, lineHeight: 1, marginTop: 18 }}>
-            {runner.preWorkSec}
-          </div>
+    <div
+      className="focus-timer"
+      style={{
+        fontSize: "clamp(140px, 28vw, 360px)",
+        fontWeight: 900,
+        lineHeight: 1,
+        marginTop: 18,
+      }}
+    >
+      {runner.preWorkSec}
+    </div>
 
-          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
-            Los geht’s in {runner.preWorkSec}…
-          </div>
-        </div>
-      ) : null}
+    <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
+      Los geht’s in {runner.preWorkSec}…
+    </div>
+  </div>
+) : null}
     </div>
   );
 }

@@ -215,3 +215,24 @@ body {
   font-weight: 900;
   margin: 8px 0;
 }
+
+/* =========================
+   Countdown (letzte 3s vor WORK) - ROT
+========================= */
+
+@keyframes countdownPulse {
+  0% { filter: brightness(1); }
+  50% { filter: brightness(1.25); }
+  100% { filter: brightness(1); }
+}
+
+/* Wird aktiv, wenn du im App.tsx die Klasse "countdown" setzt */
+.focus-overlay.countdown {
+  background: #b00000 !important; /* Rot */
+  animation: countdownPulse 0.6s infinite;
+}
+
+/* optional: Timer noch klarer im Countdown */
+.focus-overlay.countdown .focus-timer {
+  text-shadow: 0 0 18px rgba(255,255,255,0.35);
+}

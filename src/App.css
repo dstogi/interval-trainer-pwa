@@ -236,3 +236,38 @@ body {
 .focus-overlay.countdown .focus-timer {
   text-shadow: 0 0 18px rgba(255,255,255,0.35);
 }
+/* =========================
+   BigView: Status / Ansage (Bereit, Arbeit, Pause, Pausiert, Fertig)
+========================= */
+.focus-status {
+  font-weight: 900;
+  font-size: clamp(30px, 6vw, 86px);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+
+  padding: 10px 18px;
+  border-radius: 999px;
+
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
+  text-shadow: 0 8px 26px rgba(0, 0, 0, 0.35);
+
+  /* lange Texte wie "PAUSE (Wdh)" sollen nicht kaputt umbrechen */
+  white-space: nowrap;
+  max-width: min(92vw, 1100px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  /* nice-to-have (wenn Browser kann) */
+  backdrop-filter: blur(6px);
+}
+
+/* Farb-Akzente je Phase */
+.focus-status.work { color: #d2ffe7; }
+.focus-status.rest { color: #ffe7b3; }
+.focus-status.warmup,
+.focus-status.cooldown { color: #d6e6ff; }
+.focus-status.paused { color: #ffd1a8; }
+.focus-status.done { color: #d7ffe1; }

@@ -3142,14 +3142,8 @@ function Runner({
       </button>
     </div>
 
-    <div
-      style={{
-        fontSize: "clamp(18px, 4vw, 44px)",
-        letterSpacing: "0.12em",
-        textTransform: "uppercase",
-        opacity: 0.95,
-      }}
-    >
+   <div className={`focus-status ${tone}`}>{headline}</div>
+
       NÄCHSTE: ARBEIT
     </div>
 
@@ -3499,7 +3493,8 @@ function RepRunner({
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 10 }}>
-          <div style={{ fontSize: "clamp(18px, 4vw, 48px)", letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.95 }}>
+         <div className={`focus-status ${tone}`}>{headline}</div>
+
             {headline}
           </div>
 

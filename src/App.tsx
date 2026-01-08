@@ -2853,22 +2853,15 @@ function Runner({
             gap: 10,
           }}
         >
-          <div
-            style={{
-              fontSize: "clamp(18px, 4vw, 48px)",
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              opacity: 0.95,
-            }}
-          >
-            {runner.status === "IDLE"
-              ? "Bereit"
-              : runner.status === "PAUSED"
-              ? "Pausiert"
-              : runner.status === "FINISHED"
-              ? "Fertig"
-              : phase.label}
-          </div>
+<div className={`focus-status ${tone}`}>
+  {runner.status === "IDLE"
+    ? "Bereit"
+    : runner.status === "PAUSED"
+    ? "Pausiert"
+    : runner.status === "FINISHED"
+    ? "Fertig"
+    : phase.label}
+</div>
 
           <div
             style={{
@@ -2980,16 +2973,7 @@ function Runner({
       </button>
     </div>
 
-    <div
-      style={{
-        fontSize: "clamp(18px, 4vw, 44px)",
-        letterSpacing: "0.12em",
-        textTransform: "uppercase",
-        opacity: 0.95,
-      }}
-    >
-      NÄCHSTE: ARBEIT
-    </div>
+<div className={`focus-status ${tone}`}>{headline}</div>
 
     <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
       {currentName}

@@ -2939,66 +2939,7 @@ const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneTo
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
 
-{/* PRE-WORK COUNTDOWN OVERLAY */}
-{showPreWork ? (
-  <div
-    className="focus-overlay countdown"
-    style={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 10000,
-      display: "flex",
-      flexDirection: "column",
-      justifyContent: "center",
-      alignItems: "center",
-      textAlign: "center",
-      color: "#fff",
-      ...workBgStyle,
-      padding:
-        "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
-    }}
-  >
-    <div style={{ position: "absolute", top: 12, right: 12 }}>
-      <button
-        style={{
-          fontSize: 16,
-          padding: "10px 12px",
-          borderRadius: 12,
-          border: "1px solid rgba(255,255,255,0.25)",
-          background: "rgba(255,255,255,0.12)",
-          color: "#fff",
-        }}
-        onClick={skip}
-      >
-        Skip
-      </button>
-    </div>
-
-<div className={`focus-status ${tone}`}>{headline}</div>
-
-    <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
-      {currentName}
-    </div>
-
-    {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
-
-    <div
-      className="focus-timer"
-      style={{
-        fontSize: "clamp(140px, 28vw, 360px)",
-        fontWeight: 900,
-        lineHeight: 1,
-        marginTop: 18,
-      }}
-    >
-      {runner.preWorkSec}
-    </div>
-
-    <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
-      Los geht’s in {runner.preWorkSec}…
-    </div>
-  </div>
-) : null}
+PRE-WORK COUNTDOWN
      </div>
     );
   }
@@ -3108,14 +3049,13 @@ const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneTo
         </div>
       )}
 
-{/* PRE-WORK COUNTDOWN auch in Normalansicht */}
+{/* PRE-WORK COUNTDOWN OVERLAY */}
 {showPreWork ? (
   <div
-    className="focus-overlay countdown"
     style={{
       position: "fixed",
       inset: 0,
-      zIndex: 9999,
+      zIndex: 10000,
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
@@ -3123,14 +3063,13 @@ const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneTo
       textAlign: "center",
       color: "#fff",
       ...workBgStyle,
-      padding:
-        "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+      padding: window.innerWidth < 480 ? "16px" : "24px",
     }}
   >
     <div style={{ position: "absolute", top: 12, right: 12 }}>
       <button
         style={{
-          fontSize: 16,
+          fontSize: 14,
           padding: "10px 12px",
           borderRadius: 12,
           border: "1px solid rgba(255,255,255,0.25)",
@@ -3143,16 +3082,15 @@ const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneTo
       </button>
     </div>
 
-   <div className={`focus-status ${tone}`}>{headline}</div>
-
-      NÄCHSTE: ARBEIT
-    </div>
+    <div className="focus-subtitle">NÄCHSTE: {phase.label}</div>
 
     <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
       {currentName}
     </div>
 
-    {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
+    {showCountdownImage ? (
+      <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} />
+    ) : null}
 
     <div
       className="focus-timer"
@@ -3171,6 +3109,7 @@ const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneTo
     </div>
   </div>
 ) : null}
+
     </div>
   );
 }

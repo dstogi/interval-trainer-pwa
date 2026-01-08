@@ -2724,7 +2724,8 @@ function Runner({
 
   // Bild NICHT als Background, sondern separat anzeigen:
   const bgStyle: any = { backgroundColor: toneBg };
-  const workBgStyle: any = { backgroundColor: toneToBg("work") };
+  const countdownUrgent = showPreWork && runner.preWorkSec <= 2; // 2..1 rot
+const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneToBg("work") };
 
   const isActive = runner.status === "RUNNING" || runner.status === "PAUSED";
   const showWorkImage = isActive && phase.type === "WORK" && runner.preWorkSec === 0 && Boolean(currentImage);

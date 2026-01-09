@@ -3344,16 +3344,18 @@ function RepRunner({
     setSaved(true);
   }
 
-  const tone: FocusTone =
-    stage === "REST"
-      ? "rest"
-      : stage === "DONE"
-      ? "done"
-      : stage === "COOLDOWN"
-      ? "cooldown"
-      : stage === "SET"
-      ? "work"
-      : "warmup";
+const tone: FocusTone =
+  stage === "REST"
+    ? "rest"
+    : stage === "DONE"
+    ? "done"
+    : stage === "COOLDOWN"
+    ? "cooldown"
+    : stage === "SET"
+    ? "work"
+    : stage === "READY"
+    ? "ready"
+    : "warmup";
 
   const bg = toneToBg(tone);
 

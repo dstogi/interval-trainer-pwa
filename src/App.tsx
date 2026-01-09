@@ -11,7 +11,7 @@ type RestKind = "REP" | "SET" | null;
 
 type TimingConfig = {
   warmupSec: number;
-  workSec: number;
+  workSec: number;TIME Runner
   restBetweenRepsSec: number;
   repsPerSet: number;
   restBetweenSetsSec: number;
@@ -2441,7 +2441,7 @@ function MediaBox({
 
 
 
-/* ===== TIME Runner (Ansage groß + sauberer Code, kein PRE-WORK TEXT) ===== */
+/* ===== TIME Runner (Ampel Farben + Controls immer sichtbar) ===== */
 function Runner({
   card,
   prefs,
@@ -2466,7 +2466,10 @@ function Runner({
   const totalPlanned = useMemo(() => totalSessionSec(phases), [phases]);
 
   const workCount = useMemo(() => phases.filter((p) => p.type === "WORK").length, [phases]);
-  const totalWithCountdown = useMemo(() => totalPlanned + PRE_WORK_COUNTDOWN * workCount, [totalPlanned, workCount]);
+  const totalWithCountdown = useMemo(
+    () => totalPlanned + PRE_WORK_COUNTDOWN * workCount,
+    [totalPlanned, workCount]
+  );
 
   const [runner, setRunner] = useState<RunnerState>(() => ({
     status: "IDLE",
@@ -2533,7 +2536,13 @@ function Runner({
           return {
             ...prev,
             remainingSec: nextRem,
-            totalRemainingSec: computeRemainingTotalWithPreWork(phases, prev.phaseIndex, nextRem, 0, PRE_WORK_COUNTDOWN),
+            totalRemainingSec: computeRemainingTotalWithPreWork(
+              phases,
+              prev.phaseIndex,
+              nextRem,
+              0,
+              PRE_WORK_COUNTDOWN
+            ),
           };
         }
 
@@ -2553,7 +2562,13 @@ function Runner({
           phaseIndex: nextIndex,
           remainingSec: nextRem,
           preWorkSec: nextPre,
-          totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
+          totalRemainingSec: computeRemainingTotalWithPreWork(
+            phases,
+            nextIndex,
+            nextRem,
+            nextPre,
+            PRE_WORK_COUNTDOWN
+          ),
         };
       });
     }, 1000);
@@ -2634,6 +2649,8 @@ function Runner({
   }, [runner.remainingSec, runner.preWorkSec, runner.status, prefs.countdownBeeps, prefs.sound]);
 
   function startPauseResume() {
+    if (runner.status === "IDLE" || runner.status === "FINISHED") setSaved(false);
+
     setRunner((prev) => {
       if (prev.status === "IDLE" || prev.status === "FINISHED") {
         const idx = 0;
@@ -2686,12 +2703,19 @@ function Runner({
         phaseIndex: nextIndex,
         remainingSec: nextRem,
         preWorkSec: nextPre,
-        totalRemainingSec: computeRemainingTotalWithPreWork(phases, nextIndex, nextRem, nextPre, PRE_WORK_COUNTDOWN),
+        totalRemainingSec: computeRemainingTotalWithPreWork(
+          phases,
+          nextIndex,
+          nextRem,
+          nextPre,
+          PRE_WORK_COUNTDOWN
+        ),
       };
     });
   }
 
   function stop() {
+    setSaved(false);
     setRunner({
       status: "IDLE",
       phaseIndex: 0,
@@ -2704,50 +2728,50 @@ function Runner({
   function saveToHistory() {
     if (saved) return;
     if (!profileId) return;
-    const entry = makeTimeLogEntry(profileId, card, totalPlanned);
+    const entry = makeTimeLogEntry(profileId, card, totalPlanned); // Log ohne Countdown (sauber planbar)
     onSaveLog(entry);
     setSaved(true);
   }
 
-const showPreWork = phase?.type === "WORK" && runner.preWorkSec > 0 && runner.status !== "FINISHED";
+  const showPreWork = phase?.type === "WORK" && runner.preWorkSec > 0 && runner.status !== "FINISHED";
 
-const tone: FocusTone =
-  runner.status === "PAUSED"
-    ? "paused"
-    : runner.status === "IDLE"
-    ? "ready"
-    : runner.status === "FINISHED"
-    ? "done"
-    : showPreWork
-    ? "ready"
-    : phase.type === "WORK"
-    ? "work"
-    : phase.type === "REST"
-    ? "rest"
-    : phase.type === "WARMUP"
-    ? "warmup"
-    : "cooldown";
+  // Ampel-Töne
+  const tone: FocusTone =
+    runner.status === "PAUSED"
+      ? "paused"
+      : runner.status === "IDLE"
+      ? "ready"
+      : runner.status === "FINISHED"
+      ? "done"
+      : showPreWork
+      ? "ready"
+      : phase.type === "WORK"
+      ? "work"
+      : phase.type === "REST"
+      ? "rest"
+      : phase.type === "WARMUP"
+      ? "warmup"
+      : "cooldown";
 
-const bgStyle: any = { backgroundColor: toneToBg(tone) };
+  const bgStyle: any = { backgroundColor: toneToBg(tone) };
 
-// Status-Text im Badge (kurz + gut lesbar)
-const statusText =
-  runner.status === "IDLE"
-    ? "Bereit"
-    : runner.status === "PAUSED"
-    ? "Pausiert"
-    : runner.status === "FINISHED"
-    ? "Fertig"
-    : showPreWork
-    ? "Bereit"
-    : phase.type === "REST"
-    ? "Pause"
-    : phase.label;
+  // Status-Text im Badge
+  const statusText =
+    runner.status === "IDLE"
+      ? "Bereit"
+      : runner.status === "PAUSED"
+      ? "Pausiert"
+      : runner.status === "FINISHED"
+      ? "Fertig"
+      : showPreWork
+      ? "Bereit"
+      : phase.type === "REST"
+      ? "Pause"
+      : phase.label;
 
-const isActive = runner.status === "RUNNING" || runner.status === "PAUSED";
-const showWorkImage = isActive && phase.type === "WORK" && runner.preWorkSec === 0 && Boolean(currentImage);
-const showCountdownImage = isActive && showPreWork && Boolean(currentImage);
-
+  const isActive = runner.status === "RUNNING" || runner.status === "PAUSED";
+  const showWorkImage = isActive && phase.type === "WORK" && runner.preWorkSec === 0 && Boolean(currentImage);
+  const showCountdownImage = isActive && showPreWork && Boolean(currentImage);
 
   const phaseProgress =
     phase?.durationSec > 0 ? Math.max(0, Math.min(1, 1 - runner.remainingSec / phase.durationSec)) : 0;
@@ -2759,9 +2783,10 @@ const showCountdownImage = isActive && showPreWork && Boolean(currentImage);
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&
     typeof (document as any)?.exitFullscreen === "function";
 
+  // Bildgrößen so, dass unten Buttons sichtbar bleiben
   const imgStyleBig: any = {
     width: "min(900px, 100%)",
-    maxHeight: "32vh",
+    maxHeight: "26vh",
     objectFit: "contain",
     borderRadius: 16,
     border: "1px solid rgba(255,255,255,0.25)",
@@ -2780,211 +2805,222 @@ const showCountdownImage = isActive && showPreWork && Boolean(currentImage);
 
   const imgStyleCountdown: any = {
     width: "min(900px, 100%)",
-    maxHeight: "28vh",
+    maxHeight: "22vh",
     objectFit: "contain",
     borderRadius: 16,
     border: "1px solid rgba(255,255,255,0.25)",
     background: "rgba(0,0,0,0.18)",
-    marginTop: 14,
+    marginTop: 10,
   };
 
-if (bigView) {
-  const overlayStyle: any = {
-    position: "fixed",
-    inset: 0,
-    zIndex: 9999,
-    display: "flex",
-    flexDirection: "column",
-    padding:
-      "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
-    color: "#fff",
-    textAlign: "center",
-    ...bgStyle,
-  };
+  if (bigView) {
+    const overlayStyle: any = {
+      position: "fixed",
+      inset: 0,
+      zIndex: 9999,
+      display: "flex",
+      flexDirection: "column",
+      padding:
+        "max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left))",
+      color: "#fff",
+      textAlign: "center",
+      ...bgStyle,
+    };
 
-  const btnSmall: any = {
-    fontSize: 16,
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.25)",
-    background: "rgba(255,255,255,0.12)",
-    color: "#fff",
-  };
+    const btnSmall: any = {
+      fontSize: 16,
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.25)",
+      background: "rgba(255,255,255,0.12)",
+      color: "#fff",
+    };
 
-  const btnBig: any = {
-    fontSize: 18,
-    padding: "14px 16px",
-    borderRadius: 14,
-    border: "none",
-    background: "rgba(255,255,255,0.18)",
-    color: "#fff",
-    fontWeight: 800,
-  };
+    const btnBig: any = {
+      fontSize: 18,
+      padding: "14px 16px",
+      borderRadius: 14,
+      border: "none",
+      background: "rgba(255,255,255,0.18)",
+      color: "#fff",
+      fontWeight: 800,
+    };
 
-  return (
-    <div style={overlayStyle}>
-      {/* Top Bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <button style={btnSmall} onClick={onBack}>
-          ←
-        </button>
-
-        <div style={{ flex: 1, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {card.title}
-        </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button style={btnSmall} onClick={() => setBigView(false)}>
-            Details
+    return (
+      <div style={overlayStyle}>
+        {/* Top Bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button style={btnSmall} onClick={onBack}>
+            ←
           </button>
-          <button
-            style={btnSmall}
-            disabled={!fsSupported}
-            title={!fsSupported ? "Vollbild wird in diesem Browser nicht unterstützt (z.B. iOS Safari)" : ""}
-            onClick={() => void toggleFullscreen()}
-          >
-            Vollbild
-          </button>
-        </div>
-      </div>
 
-      {/* Progress */}
-      <div
-        style={{
-          height: 6,
-          borderRadius: 999,
-          background: "rgba(255,255,255,0.25)",
-          overflow: "hidden",
-          marginTop: 12,
-        }}
-      >
-        <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
-      </div>
+          <div style={{ flex: 1, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {card.title}
+          </div>
 
-      {/* Main */}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflow: "auto",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <div className={`focus-status ${tone}`}>{statusText}</div>
-
-        {showPreWork ? (
-          <>
-            <div className="focus-subtitle" style={{ marginTop: 10 }}>
-              NÄCHSTE: {phase.label}
-            </div>
-
-            <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05, marginTop: 8 }}>
-              {currentName}
-            </div>
-
-            {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
-
-            <div
-              className="focus-timer"
-              style={{
-                fontSize: "clamp(120px, 26vw, 320px)",
-                fontWeight: 900,
-                lineHeight: 1,
-                fontVariantNumeric: "tabular-nums",
-                marginTop: 16,
-              }}
-            >
-              {runner.preWorkSec}
-            </div>
-
-            <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.95, marginTop: 8 }}>
-              Los geht’s in {runner.preWorkSec}…
-            </div>
-          </>
-        ) : (
-          <>
-            <div
-              style={{
-                fontSize: "clamp(72px, 18vw, 210px)",
-                fontWeight: 900,
-                lineHeight: 1,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-             {showPreWork ? String(runner.preWorkSec) : formatMMSS(runner.remainingSec)}
-
-            </div>
-
-            <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
-              {currentName}
-            </div>
-
-            {showWorkImage ? <img src={currentImage} alt="Übungsbild" style={{ ...imgStyleBig, marginTop: 12 }} /> : null}
-          </>
-        )}
-
-        <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 10 }}>
-          Profil: <b>{profileName}</b>
-        </div>
-
-        <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
-          {phase.set > 0 ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}` : "\u00A0"}
-        </div>
-
-        <div style={{ fontSize: 13, opacity: 0.9 }}>
-          Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(totalPlanned)}
-        </div>
-      </div>
-
-      {/* Controls (JETZT IMMER SICHTBAR – auch bei BEREIT/3-2-1) */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center", marginTop: 12 }}>
-        <button style={btnBig} onClick={startPauseResume}>
-          {runner.status === "RUNNING" ? "Pause" : runner.status === "PAUSED" ? "Weiter" : "Start"}
-        </button>
-
-        <button style={btnBig} onClick={skip} disabled={runner.status === "IDLE" || runner.status === "FINISHED"}>
-          Skip
-        </button>
-
-        <button style={btnBig} onClick={stop}>
-          Stop
-        </button>
-
-        {runner.status === "FINISHED" ? (
-          !saved ? (
-            <button style={btnBig} onClick={saveToHistory}>
-              In Verlauf speichern
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button style={btnSmall} onClick={() => setBigView(false)}>
+              Details
             </button>
-          ) : (
-            <span style={{ fontSize: 18, fontWeight: 900, padding: "14px 16px" }}>Gespeichert ✅</span>
-          )
-        ) : null}
-      </div>
-
-      {/* Bottom */}
-      <div
-        style={{
-          fontSize: 12,
-          opacity: 0.9,
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-          marginTop: 12,
-        }}
-      >
-        <div>
-          Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1 {prefs.countdownBeeps ? "✅" : "❌"}
+            <button
+              style={btnSmall}
+              disabled={!fsSupported}
+              title={!fsSupported ? "Vollbild wird in diesem Browser nicht unterstützt (z.B. iOS Safari)" : ""}
+              onClick={() => void toggleFullscreen()}
+            >
+              Vollbild
+            </button>
+          </div>
         </div>
-        <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+
+        {/* Progress */}
+        <div
+          style={{
+            height: 6,
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.25)",
+            overflow: "hidden",
+            marginTop: 12,
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
+        </div>
+
+        {/* Main (scrollt notfalls, Buttons bleiben unten sichtbar) */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "auto",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <div className={`focus-status ${tone}`}>{statusText}</div>
+
+          {showPreWork ? (
+            <>
+              <div className="focus-subtitle" style={{ marginTop: 6 }}>
+                NÄCHSTE: {phase.label}
+              </div>
+
+              <div style={{ fontSize: "clamp(24px, 5.5vw, 64px)", fontWeight: 900, lineHeight: 1.05 }}>
+                {currentName}
+              </div>
+
+              {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
+
+              <div
+                className="focus-timer"
+                style={{
+                  fontSize: "clamp(96px, 22vh, 220px)",
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  fontVariantNumeric: "tabular-nums",
+                  marginTop: 10,
+                }}
+              >
+                {runner.preWorkSec}
+              </div>
+
+              <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.95 }}>
+                Los geht’s in {runner.preWorkSec}…
+              </div>
+            </>
+          ) : (
+            <>
+              <div
+                style={{
+                  fontSize: "clamp(72px, 18vw, 210px)",
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {formatMMSS(runner.remainingSec)}
+              </div>
+
+              <div style={{ fontSize: "clamp(24px, 5.5vw, 64px)", fontWeight: 900, lineHeight: 1.05 }}>
+                {currentName}
+              </div>
+
+              {showWorkImage ? <img src={currentImage} alt="Übungsbild" style={{ ...imgStyleBig, marginTop: 10 }} /> : null}
+            </>
+          )}
+
+          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
+            Profil: <b>{profileName}</b>
+          </div>
+
+          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
+            {phase.set > 0 ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}` : "\u00A0"}
+          </div>
+
+          <div style={{ fontSize: 13, opacity: 0.9 }}>
+            Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(totalWithCountdown)}
+          </div>
+        </div>
+
+        {/* Controls (IMMER sichtbar) */}
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            justifyContent: "center",
+            marginTop: 12,
+            flexShrink: 0,
+          }}
+        >
+          <button style={btnBig} onClick={startPauseResume}>
+            {runner.status === "RUNNING" ? "Pause" : runner.status === "PAUSED" ? "Weiter" : "Start"}
+          </button>
+
+          <button style={btnBig} onClick={skip} disabled={runner.status === "IDLE" || runner.status === "FINISHED"}>
+            Skip
+          </button>
+
+          <button style={btnBig} onClick={stop}>
+            Stop
+          </button>
+
+          {runner.status === "FINISHED" ? (
+            !saved ? (
+              <button style={btnBig} onClick={saveToHistory}>
+                In Verlauf speichern
+              </button>
+            ) : (
+              <span style={{ fontSize: 18, fontWeight: 900, padding: "14px 16px" }}>Gespeichert ✅</span>
+            )
+          ) : null}
+        </div>
+
+        {/* Bottom */}
+        <div
+          style={{
+            fontSize: 12,
+            opacity: 0.9,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            marginTop: 12,
+            flexShrink: 0,
+          }}
+        >
+          <div>
+            Sound {prefs.sound ? "✅" : "❌"} · Vib {prefs.vibration ? "✅" : "❌"} · 3‑2‑1{" "}
+            {prefs.countdownBeeps ? "✅" : "❌"}
+          </div>
+          <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
   // Normal View
   return (
@@ -3008,21 +3044,20 @@ if (bigView) {
       <h3 style={{ marginTop: 6 }}>{card.title}</h3>
 
       <div style={{ borderRadius: 16, padding: 12, color: "#fff", ...bgStyle }}>
-        <div
-          className={statusClassName}
-          style={{
-            fontSize: "clamp(18px, 4vw, 34px)",
-            padding: "0.12em 0.55em",
-          }}
-        >
-          {headline}
+        {/* ✅ Build-Fix: kein headline/statusClassName im TIME Runner */}
+        <div className={`focus-status ${tone}`} style={{ fontSize: "clamp(18px, 4vw, 34px)", padding: "0.12em 0.55em" }}>
+          {statusText}
         </div>
 
         <div style={{ fontSize: 26, fontWeight: 900, marginTop: 10 }}>{currentName}</div>
 
         <div style={{ fontSize: 44, fontWeight: 900, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>
-          {formatMMSS(runner.remainingSec)}
+          {showPreWork ? String(runner.preWorkSec) : formatMMSS(runner.remainingSec)}
         </div>
+
+        {showPreWork ? (
+          <div style={{ marginTop: 4, fontSize: 12, opacity: 0.95 }}>Los geht’s in {runner.preWorkSec}…</div>
+        ) : null}
 
         <div
           style={{
@@ -3036,22 +3071,22 @@ if (bigView) {
           <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
         </div>
 
-        {/* Bild nur bei ARBEIT */}
-        {showWorkImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleSmall} /> : null}
+        {/* Bild bei ARBEIT oder im 4-3-2-1 Countdown */}
+        {showWorkImage || showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleSmall} /> : null}
 
         <div style={{ marginTop: 10, fontSize: 13, opacity: 0.95 }}>
           {phase.set > 0 ? `Satz ${phase.set}/${card.timing.sets} · Wdh ${phase.rep}/${card.timing.repsPerSet}` : "—"}
         </div>
 
         <div style={{ marginTop: 6, fontSize: 13, opacity: 0.95 }}>
-          Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(totalPlanned)}
+          Verbleibend: {formatMMSS(runner.totalRemainingSec)} · Gesamt: {formatMMSS(totalWithCountdown)}
         </div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
           <button onClick={startPauseResume}>
             {runner.status === "RUNNING" ? "Pause" : runner.status === "PAUSED" ? "Weiter" : "Start"}
           </button>
-          <button onClick={skip} disabled={runner.status === "IDLE"}>
+          <button onClick={skip} disabled={runner.status === "IDLE" || runner.status === "FINISHED"}>
             Skip
           </button>
           <button onClick={stop}>Stop</button>
@@ -3060,11 +3095,7 @@ if (bigView) {
 
       <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={prefs.sound}
-            onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })}
-          />
+          <input type="checkbox" checked={prefs.sound} onChange={(e) => onPrefsChange({ ...prefs, sound: e.target.checked })} />
           Sound
         </label>
 
@@ -3099,7 +3130,6 @@ if (bigView) {
           </div>
         </div>
       )}
-
     </div>
   );
 }
@@ -3331,7 +3361,7 @@ const tone: FocusTone =
       ? "Cooldown"
       : "Fertig";
 
-  const statusClassName = `focus-status focus-status--${tone}`;
+  const statusClassName = `focus-status ${tone}`;
 
   const fsSupported =
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&

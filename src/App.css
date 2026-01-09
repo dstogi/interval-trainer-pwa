@@ -40,20 +40,52 @@ body {
   letter-spacing: 0.2px;
 }
 
-/* ===== Fokus-Ansagen (BEREIT / ARBEIT / PAUSIERT / …) ===== */
+/* ===== Fokus / Ansagen (Bereit, ARBEIT, Pausiert, Fertig, ...) ===== */
 .focus-status {
-  font-size: clamp(26px, 5.5vw, 84px);
+  font-size: clamp(32px, 6vw, 96px);
   font-weight: 900;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-
   display: inline-block;
-  padding: 10px 18px;
+
+  padding: 0.18em 0.65em;
   border-radius: 999px;
 
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  background: rgba(0, 0, 0, 0.22);
+
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.focus-status--work {
+  color: #ffffff;
+}
+
+.focus-status--rest {
+  color: #ffd54f;
+}
+
+.focus-status--warmup,
+.focus-status--cooldown {
+  color: #bbdefb;
+}
+
+.focus-status--paused {
+  color: #ffab40;
+}
+
+.focus-status--done {
+  color: #69f0ae;
+}
+
+/* optional: Subtitle im 4-3-2-1 Overlay */
+.focus-subtitle {
+  font-size: clamp(18px, 3.6vw, 44px);
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.95;
 }
 
 /* Farb-Akzente je Zustand (tone: work/rest/warmup/cooldown/paused/done) */

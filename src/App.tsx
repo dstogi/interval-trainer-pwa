@@ -2915,7 +2915,8 @@ if (bigView) {
                 fontVariantNumeric: "tabular-nums",
               }}
             >
-              {formatMMSS(runner.remainingSec)}
+             {showPreWork ? String(runner.preWorkSec) : formatMMSS(runner.remainingSec)}
+
             </div>
 
             <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>

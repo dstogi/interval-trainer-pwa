@@ -2438,7 +2438,7 @@ function MediaBox({
 
 
 
-/* ===== ANFANG TEIL 4/5: TIME Runner (Bild klein & nur bei ARBEIT/Countdown) ===== */
+/* ===== TIME Runner (Ansage groß + sauberer Code, kein PRE-WORK TEXT) ===== */
 function Runner({
   card,
   prefs,
@@ -2489,6 +2489,7 @@ function Runner({
     };
   }, [bigView]);
 
+  // Reset bei Card-Wechsel
   useEffect(() => {
     setRunner({
       status: "IDLE",
@@ -2559,7 +2560,7 @@ function Runner({
 
   const phase = phases[runner.phaseIndex] ?? phases[0];
 
-  // --- NEU: Übung + Bild pro Satz auflösen (Fallback auf Standard-Übung) ---
+  // --- Übung + Bild pro Satz auflösen (Fallback auf Standard-Übung) ---
   function resolveExerciseForPhase(p: Phase): Exercise {
     const base = card.exercise ?? { name: "", notes: "", image: undefined };
     const list = Array.isArray(card.setExercises) ? card.setExercises : [];
@@ -2712,6 +2713,8 @@ function Runner({
       ? "paused"
       : runner.status === "FINISHED"
       ? "done"
+      : showPreWork
+      ? "work"
       : phase.type === "WORK"
       ? "work"
       : phase.type === "REST"
@@ -2720,12 +2723,24 @@ function Runner({
       ? "warmup"
       : "cooldown";
 
-  const toneBg = toneToBg(tone);
+  const headline =
+    runner.status === "IDLE"
+      ? "Bereit"
+      : runner.status === "PAUSED"
+      ? "Pausiert"
+      : runner.status === "FINISHED"
+      ? "Fertig"
+      : showPreWork
+      ? "Bereit"
+      : phase.label;
 
-  // Bild NICHT als Background, sondern separat anzeigen:
+  const statusClassName = `focus-status focus-status--${tone}`;
+
+  const toneBg = toneToBg(tone);
   const bgStyle: any = { backgroundColor: toneBg };
+
   const countdownUrgent = showPreWork && runner.preWorkSec <= 2; // 2..1 rot
-const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneToBg("work") };
+  const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneToBg("work") };
 
   const isActive = runner.status === "RUNNING" || runner.status === "PAUSED";
   const showWorkImage = isActive && phase.type === "WORK" && runner.preWorkSec === 0 && Boolean(currentImage);
@@ -2854,33 +2869,54 @@ const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneTo
             gap: 10,
           }}
         >
-<div className={`focus-status ${tone}`}>
-  {runner.status === "IDLE"
-    ? "Bereit"
-    : runner.status === "PAUSED"
-    ? "Pausiert"
-    : runner.status === "FINISHED"
-    ? "Fertig"
-    : phase.label}
-</div>
+          <div className={statusClassName}>{headline}</div>
 
-          <div
-            style={{
-              fontSize: "clamp(72px, 18vw, 210px)",
-              fontWeight: 900,
-              lineHeight: 1,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {formatMMSS(runner.remainingSec)}
-          </div>
+          {showPreWork ? (
+            <>
+              <div className="focus-subtitle">NÄCHSTE: {phase.label}</div>
 
-          <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
-            {currentName}
-          </div>
+              <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
+                {currentName}
+              </div>
 
-          {/* Bild nur bei ARBEIT */}
-          {showWorkImage ? <img src={currentImage} alt="Übungsbild" style={{ ...imgStyleBig, marginTop: 12 }} /> : null}
+              {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
+
+              <div
+                style={{
+                  fontSize: "clamp(140px, 28vw, 360px)",
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  marginTop: 18,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {runner.preWorkSec}
+              </div>
+
+              <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
+                Los geht’s in {runner.preWorkSec}…
+              </div>
+            </>
+          ) : (
+            <>
+              <div
+                style={{
+                  fontSize: "clamp(72px, 18vw, 210px)",
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {formatMMSS(runner.remainingSec)}
+              </div>
+
+              <div style={{ fontSize: "clamp(28px, 6vw, 72px)", fontWeight: 900, lineHeight: 1.05 }}>
+                {currentName}
+              </div>
+
+              {showWorkImage ? <img src={currentImage} alt="Übungsbild" style={{ ...imgStyleBig, marginTop: 12 }} /> : null}
+            </>
+          )}
 
           <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92 }}>
             Profil: <b>{profileName}</b>
@@ -2938,9 +2974,7 @@ const workBgStyle: any = { backgroundColor: countdownUrgent ? "#b00020" : toneTo
           </div>
           <div>{new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
-
-PRE-WORK COUNTDOWN
-     </div>
+      </div>
     );
   }
 
@@ -2966,8 +3000,17 @@ PRE-WORK COUNTDOWN
       <h3 style={{ marginTop: 6 }}>{card.title}</h3>
 
       <div style={{ borderRadius: 16, padding: 12, color: "#fff", ...bgStyle }}>
-        <div style={{ fontSize: 14, opacity: 0.95, fontWeight: 800 }}>{phase.label}</div>
-        <div style={{ fontSize: 26, fontWeight: 900, marginTop: 6 }}>{currentName}</div>
+        <div
+          className={statusClassName}
+          style={{
+            fontSize: "clamp(18px, 4vw, 34px)",
+            padding: "0.12em 0.55em",
+          }}
+        >
+          {headline}
+        </div>
+
+        <div style={{ fontSize: 26, fontWeight: 900, marginTop: 10 }}>{currentName}</div>
 
         <div style={{ fontSize: 44, fontWeight: 900, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>
           {formatMMSS(runner.remainingSec)}
@@ -3049,74 +3092,68 @@ PRE-WORK COUNTDOWN
         </div>
       )}
 
-{/* PRE-WORK COUNTDOWN OVERLAY */}
-{showPreWork ? (
-  <div
-    style={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 10000,
-      display: "flex",
-      flexDirection: "column",
-      justifyContent: "center",
-      alignItems: "center",
-      textAlign: "center",
-      color: "#fff",
-      ...workBgStyle,
-      padding: window.innerWidth < 480 ? "16px" : "24px",
-    }}
-  >
-    <div style={{ position: "absolute", top: 12, right: 12 }}>
-      <button
-        style={{
-          fontSize: 14,
-          padding: "10px 12px",
-          borderRadius: 12,
-          border: "1px solid rgba(255,255,255,0.25)",
-          background: "rgba(255,255,255,0.12)",
-          color: "#fff",
-        }}
-        onClick={skip}
-      >
-        Skip
-      </button>
-    </div>
+      {/* PRE-WORK COUNTDOWN OVERLAY */}
+      {showPreWork ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            textAlign: "center",
+            color: "#fff",
+            ...workBgStyle,
+            padding: window.innerWidth < 480 ? "16px" : "24px",
+          }}
+        >
+          <div style={{ position: "absolute", top: 12, right: 12 }}>
+            <button
+              style={{
+                fontSize: 14,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.25)",
+                background: "rgba(255,255,255,0.12)",
+                color: "#fff",
+              }}
+              onClick={skip}
+            >
+              Skip
+            </button>
+          </div>
 
-    <div className="focus-subtitle">NÄCHSTE: {phase.label}</div>
+          <div className="focus-subtitle">NÄCHSTE: {phase.label}</div>
 
-    <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>
-      {currentName}
-    </div>
+          <div style={{ fontSize: "clamp(28px, 6vw, 80px)", fontWeight: 900, marginTop: 12 }}>{currentName}</div>
 
-    {showCountdownImage ? (
-      <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} />
-    ) : null}
+          {showCountdownImage ? <img src={currentImage} alt="Übungsbild" style={imgStyleCountdown} /> : null}
 
-    <div
-      className="focus-timer"
-      style={{
-        fontSize: "clamp(140px, 28vw, 360px)",
-        fontWeight: 900,
-        lineHeight: 1,
-        marginTop: 18,
-      }}
-    >
-      {runner.preWorkSec}
-    </div>
+          <div
+            style={{
+              fontSize: "clamp(140px, 28vw, 360px)",
+              fontWeight: 900,
+              lineHeight: 1,
+              marginTop: 18,
+            }}
+          >
+            {runner.preWorkSec}
+          </div>
 
-    <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
-      Los geht’s in {runner.preWorkSec}…
-    </div>
-  </div>
-) : null}
-
+          <div style={{ fontSize: "clamp(14px, 3vw, 22px)", opacity: 0.92, marginTop: 8 }}>
+            Los geht’s in {runner.preWorkSec}…
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
-/* ===== ENDE TEIL 4/5: TIME Runner (Bild klein & nur bei ARBEIT/Countdown) ===== */
+/* ===== ENDE TIME Runner ===== */
 
 
-/* ===== ANFANG TEIL 9/9: RepRunner (Media nur im Satz Toggle) ===== */
+/* ===== RepRunner (BigView JSX gefixt + Fokus-Ansage groß) ===== */
 function RepRunner({
   card,
   onBack,
@@ -3339,6 +3376,8 @@ function RepRunner({
       ? "Cooldown"
       : "Fertig";
 
+  const statusClassName = `focus-status focus-status--${tone}`;
+
   const fsSupported =
     typeof (document.documentElement as any)?.requestFullscreen === "function" &&
     typeof (document as any)?.exitFullscreen === "function";
@@ -3399,14 +3438,18 @@ function RepRunner({
     return (
       <div style={overlayStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button style={btnSmall} onClick={onBack}>←</button>
+          <button style={btnSmall} onClick={onBack}>
+            ←
+          </button>
 
           <div style={{ flex: 1, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {card.title}
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button style={btnSmall} onClick={() => setBigView(false)}>Details</button>
+            <button style={btnSmall} onClick={() => setBigView(false)}>
+              Details
+            </button>
 
             {/* ✅ Toggle-Button im BigView */}
             <button
@@ -3428,15 +3471,30 @@ function RepRunner({
           </div>
         </div>
 
-        <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 12 }}>
+        <div
+          style={{
+            height: 6,
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.25)",
+            overflow: "hidden",
+            marginTop: 12,
+          }}
+        >
           <div style={{ height: "100%", width: `${progress * 100}%`, background: "rgba(255,255,255,0.9)" }} />
         </div>
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 10 }}>
-         <div className={`focus-status ${tone}`}>{headline}</div>
-
-            {headline}
-          </div>
+        {/* ✅ Main (komplett in einem Container – JSX sauber) */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <div className={statusClassName}>{headline}</div>
 
           <div style={{ fontSize: "clamp(72px, 18vw, 210px)", fontWeight: 900, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
             {formatMMSS(t)}
@@ -3508,11 +3566,7 @@ function RepRunner({
 
       {/* ✅ Schalter im Normal-View */}
       <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-        <input
-          type="checkbox"
-          checked={mediaOnlyInSet}
-          onChange={(e) => setMediaOnlyInSet(e.target.checked)}
-        />
+        <input type="checkbox" checked={mediaOnlyInSet} onChange={(e) => setMediaOnlyInSet(e.target.checked)} />
         Media nur im Satz (nicht in Pause)
       </label>
 
@@ -3609,7 +3663,11 @@ function RepRunner({
           </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {!saved ? <button onClick={saveToHistory}>In Verlauf speichern</button> : <span style={{ fontWeight: 800 }}>Gespeichert ✅</span>}
+            {!saved ? (
+              <button onClick={saveToHistory}>In Verlauf speichern</button>
+            ) : (
+              <span style={{ fontWeight: 800 }}>Gespeichert ✅</span>
+            )}
             <button onClick={startWorkout}>Nochmal</button>
           </div>
         </div>
@@ -3617,8 +3675,7 @@ function RepRunner({
     </div>
   );
 }
-/* ===== ENDE TEIL 9/9: RepRunner (Media nur im Satz Toggle) ===== */
-
+/* ===== ENDE RepRunner ===== */
 
 /* =========================
    Profiles View

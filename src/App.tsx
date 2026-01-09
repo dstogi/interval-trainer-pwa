@@ -11,7 +11,7 @@ type RestKind = "REP" | "SET" | null;
 
 type TimingConfig = {
   warmupSec: number;
-  workSec: number;TIME Runner
+  workSec: number;
   restBetweenRepsSec: number;
   repsPerSet: number;
   restBetweenSetsSec: number;

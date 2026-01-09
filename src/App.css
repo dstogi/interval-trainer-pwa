@@ -39,6 +39,49 @@ body {
   font-weight: 800;
   letter-spacing: 0.2px;
 }
+/* ===== Focus Mode: Status/Subtitle high contrast ===== */
+.focus-status {
+  font-size: clamp(24px, 5vw, 72px);
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+
+  color: #fff;
+  opacity: 1;
+
+  padding: 0.38em 0.95em;
+  border-radius: 999px;
+
+  border: 2px solid rgba(255, 255, 255, 0.65);
+  background: rgba(0, 0, 0, 0.18);
+
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+}
+
+/* Optional: leichter "Glow" je Zustand */
+.focus-status.work {
+  box-shadow: 0 0 22px rgba(0, 255, 140, 0.25);
+}
+.focus-status.ready {
+  box-shadow: 0 0 22px rgba(255, 180, 0, 0.28);
+}
+.focus-status.rest,
+.focus-status.paused {
+  box-shadow: 0 0 22px rgba(255, 0, 0, 0.25);
+}
+.focus-status.warmup,
+.focus-status.cooldown {
+  box-shadow: 0 0 22px rgba(0, 120, 255, 0.22);
+}
+
+.focus-subtitle {
+  font-size: clamp(18px, 4vw, 48px);
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+}
 
 /* ===== Fokus / Ansagen (Bereit, ARBEIT, Pausiert, Fertig, ...) ===== */
 .focus-status {

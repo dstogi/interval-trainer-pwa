@@ -421,3 +421,111 @@ body {
 .focus-timer {
   text-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
+/* =========================
+   HOME UI (mobile clean)
+========================= */
+
+.home-top {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.home-profile {
+  display: grid;
+  gap: 6px;
+}
+
+.home-profile > span {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.home-profile select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+}
+
+.home-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.home-create {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.home-create-random {
+  grid-column: 1 / -1;
+}
+
+.card-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.card-actions--more {
+  margin-top: 8px;
+}
+
+.it-btn {
+  width: 100%;
+  padding: 12px 12px;
+  border-radius: 12px;
+  border: 1px solid #111827;
+  background: #111827;
+  color: #fff;
+  font-weight: 800;
+}
+
+.it-btn:disabled {
+  opacity: 0.6;
+}
+
+.it-btn--chip {
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
+.it-btn--primary {
+  background: #0a7a4a;
+  border-color: #0a7a4a;
+}
+
+.it-btn--secondary {
+  background: #1f2937;
+  border-color: #1f2937;
+}
+
+.it-btn--danger {
+  background: #b00020;
+  border-color: #b00020;
+}
+
+.it-btn--ghost {
+  background: #ffffff;
+  color: #111827;
+  border-color: #d1d5db;
+}
+
+@media (min-width: 720px) {
+  .home-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .home-create {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .home-create-random {
+    grid-column: auto;
+  }
+}

@@ -1328,13 +1328,68 @@ export default function App() {
                       {" · "}Gesamt {formatMMSS(total)}
                     </div>
 
-                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                      <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
-                      <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
-                      <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
-                      <button onClick={() => shareCard(card)}>Teilen</button>
-                      <button onClick={() => deleteCard(card.id)}>Löschen</button>
-                    </div>
+<div className="card-actions">
+  <button
+    className="it-btn it-btn--primary"
+    onClick={() => {
+      setHomeMoreCardId(null);
+      setScreen({ name: "RUN", id: card.id });
+    }}
+  >
+    Start
+  </button>
+
+  <button
+    className="it-btn"
+    onClick={() => {
+      setHomeMoreCardId(null);
+      setScreen({ name: "EDIT", id: card.id });
+    }}
+  >
+    Bearbeiten
+  </button>
+
+  <button
+    className="it-btn it-btn--chip"
+    onClick={() => setHomeMoreCardId((prev) => (prev === card.id ? null : card.id))}
+  >
+    {homeMoreCardId === card.id ? "Weniger" : "Mehr"}
+  </button>
+</div>
+
+{homeMoreCardId === card.id && (
+  <div className="card-actions card-actions--more">
+    <button
+      className="it-btn"
+      onClick={() => {
+        duplicateCard(card.id);
+        setHomeMoreCardId(null);
+      }}
+    >
+      Duplizieren
+    </button>
+
+    <button
+      className="it-btn"
+      onClick={() => {
+        void shareCard(card);
+        setHomeMoreCardId(null);
+      }}
+    >
+      Teilen
+    </button>
+
+    <button
+      className="it-btn it-btn--danger"
+      onClick={() => {
+        deleteCard(card.id);
+        setHomeMoreCardId(null);
+      }}
+    >
+      Löschen
+    </button>
+  </div>
+)}
                   </div>
                 );
               })}

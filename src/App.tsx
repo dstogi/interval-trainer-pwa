@@ -969,6 +969,8 @@ export default function App() {
   const [history, setHistory] = useState<WorkoutLogEntry[]>(() => loadHistory());
 
   const [screen, setScreen] = useState<Screen>({ name: "HOME" });
+  // HOME: "Mehr"-Menü pro Card (für Handy aufgeräumter)
+  const [homeMoreCardId, setHomeMoreCardId] = useState<string | null>(null);
 
   useEffect(() => savePrefs(prefs), [prefs]);
   useEffect(() => saveCards(cards), [cards]);
@@ -1180,9 +1182,9 @@ export default function App() {
         {/* HOME */}
         {screen.name === "HOME" && (
           <>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                Profil:
+            <div className="home-top">
+              <label className="home-profile">
+                <span>Profil</span>
                 <select value={activeProfileId} onChange={(e) => setActiveProfileId(e.target.value)}>
                   {profiles.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -1192,24 +1194,39 @@ export default function App() {
                 </select>
               </label>
 
-              <button onClick={() => setScreen({ name: "HISTORY" })}>Verlauf</button>
-              <button onClick={() => setScreen({ name: "PROFILES" })}>Profile</button>
-              <button onClick={() => setScreen({ name: "RANKING" })}>Ranking</button>
-              <button onClick={() => setScreen({ name: "IMPORT" })}>Import</button>
-            </div>
+              <div className="home-nav">
+                <button className="it-btn it-btn--ghost it-btn--chip" onClick={() => setScreen({ name: "HISTORY" })}>
+                  📜 Verlauf
+                </button>
+                <button className="it-btn it-btn--ghost it-btn--chip" onClick={() => setScreen({ name: "PROFILES" })}>
+                  👥 Profile
+                </button>
+                <button className="it-btn it-btn--ghost it-btn--chip" onClick={() => setScreen({ name: "RANKING" })}>
+                  🏆 Ranking
+                </button>
+                <button className="it-btn it-btn--ghost it-btn--chip" onClick={() => setScreen({ name: "IMPORT" })}>
+                  ⬇️ Import
+                </button>
+              </div>
 
-            <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => setScreen({ name: "EDIT", kind: "TIME" })}>+ Zeit‑Karte</button>
-              <button onClick={() => setScreen({ name: "EDIT", kind: "REPS" })}>+ Wdh‑Karte</button>
+              <div className="home-create">
+                <button className="it-btn it-btn--primary" onClick={() => setScreen({ name: "EDIT", kind: "TIME" })}>
+                  ＋ Zeit‑Karte
+                </button>
+                <button className="it-btn it-btn--primary" onClick={() => setScreen({ name: "EDIT", kind: "REPS" })}>
+                  ＋ Wdh‑Karte
+                </button>
 
-              <button
-                onClick={() => {
-                  const c = Math.random() < 0.5 ? makeRandomCard() : makeRandomRepCard();
-                  upsertCard(c);
-                }}
-              >
-                🎲 Zufalls‑Session
-              </button>
+                <button
+                  className="it-btn it-btn--secondary home-create-random"
+                  onClick={() => {
+                    const c = Math.random() < 0.5 ? makeRandomCard() : makeRandomRepCard();
+                    upsertCard(c);
+                  }}
+                >
+                  🎲 Zufalls‑Session
+                </button>
+              </div>
             </div>
 
             <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
@@ -1227,13 +1244,69 @@ export default function App() {
                         {card.targetSetSec ? ` · Zielzeit/Satz ${formatMMSS(card.targetSetSec)}` : ""}
                       </div>
 
-                      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                        <button onClick={() => setScreen({ name: "RUN", id: card.id })}>Start</button>
-                        <button onClick={() => setScreen({ name: "EDIT", id: card.id })}>Bearbeiten</button>
-                        <button onClick={() => duplicateCard(card.id)}>Duplizieren</button>
-                        <button onClick={() => shareCard(card)}>Teilen</button>
-                        <button onClick={() => deleteCard(card.id)}>Löschen</button>
+                    <div className="card-actions">
+                      <button
+                        className="it-btn it-btn--primary"
+                        onClick={() => {
+                          setHomeMoreCardId(null);
+                          setScreen({ name: "RUN", id: card.id });
+                        }}
+                      >
+                        Start
+                      </button>
+
+                      <button
+                        className="it-btn"
+                        onClick={() => {
+                          setHomeMoreCardId(null);
+                          setScreen({ name: "EDIT", id: card.id });
+                        }}
+                      >
+                        Bearbeiten
+                      </button>
+
+                      <button
+                        className="it-btn it-btn--chip"
+                        onClick={() => setHomeMoreCardId((prev) => (prev === card.id ? null : card.id))}
+                      >
+                        {homeMoreCardId === card.id ? "Weniger" : "Mehr"}
+                      </button>
+                    </div>
+
+                    {homeMoreCardId === card.id && (
+                      <div className="card-actions card-actions--more">
+                        <button
+                          className="it-btn"
+                          onClick={() => {
+                            duplicateCard(card.id);
+                            setHomeMoreCardId(null);
+                          }}
+                        >
+                          Duplizieren
+                        </button>
+
+                        <button
+                          className="it-btn"
+                          onClick={() => {
+                            void shareCard(card);
+                            setHomeMoreCardId(null);
+                          }}
+                        >
+                          Teilen
+                        </button>
+
+                        <button
+                          className="it-btn it-btn--danger"
+                          onClick={() => {
+                            deleteCard(card.id);
+                            setHomeMoreCardId(null);
+                          }}
+                        >
+                          Löschen
+                        </button>
                       </div>
+                    )}
+
                     </div>
                   );
                 }

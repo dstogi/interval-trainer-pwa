@@ -1,0 +1,97 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #0b0b0c;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+#topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  font-weight: 600;
+  background: rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+}
+
+#title { font-size: 14px; opacity: 0.95; }
+#counter { font-size: 14px; opacity: 0.85; }
+
+#stage {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+}
+
+#cardImg {
+  max-width: min(92vw, 540px);
+  max-height: 86vh;
+  width: auto;
+  height: auto;
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,255,255,0.10);
+  user-select: none;
+  -webkit-user-drag: none;
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+#cardImg.slide-left {
+  transform: translateX(-40px);
+  opacity: 0.0;
+}
+
+#cardImg.slide-right {
+  transform: translateX(40px);
+  opacity: 0.0;
+}
+
+#hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  opacity: 0.7;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+
+#bottombar {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.06);
+  border-top: 1px solid rgba(255,255,255,0.10);
+}
+
+button {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-weight: 650;
+  font-size: 14px;
+}
+
+button:active {
+  transform: scale(0.99);
+  background: rgba(255,255,255,0.12);
+}
